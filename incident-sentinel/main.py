@@ -1,0 +1,95 @@
+"""Оркестрация сайдкара: Docker, debounce, снимок, LLM, Telegram."""
+
+import asyncio
+import logging
+import uuid
+from datetime import datetime, timezone
+
+from config import Settings
+from core.buffer import RingBuffer
+from core.deduplicator import Deduplicator, IncidentDraft
+from core.detector import match_log
+from core.docker_watcher import DockerWatcher
+from core.llm_client import LLMClient
+from core.notifier import Notifier
+from core.sanitizer import sanitize
+from core.snapshotter import Snapshotter
+from schemas.incident import IncidentContext
+
+logger = logging.getLogger(__name__)
+
+_NEIGHBOR_LOG_LIMIT = 20
+
+
+async def build_context(
+    buffer: RingBuffer,
+    snapshotter: Snapshotter,
+    draft: IncidentDraft,
+) -> IncidentContext:
+    logs = [sanitize(line) for line in await buffer.snapshot(draft.container)]
+    for name in await buffer.containers():
+        if name == draft.container:
+            continue
+        matched = await buffer.snapshot_matching(name, match_log)
+        logs.extend(sanitize(f"[{name}] {line}") for line in matched[-_NEIGHBOR_LOG_LIMIT:])
+    host, neighbors = await snapshotter.capture(draft.container)
+    return IncidentContext(
+        incident_id=uuid.uuid4().hex[:12],
+        timestamp=datetime.now(timezone.utc),
+        failed_container=draft.container,
+        trigger_type=draft.trigger_type,
+        raw_logs=logs,
+        host_metrics=host,
+        neighbor_states=neighbors,
+        occurrences_count=draft.occurrences,
+    )
+
+
+async def _dispatch(
+    draft: IncidentDraft,
+    buffer: RingBuffer,
+    snapshotter: Snapshotter,
+    llm: LLMClient,
+    notifier: Notifier,
+) -> None:
+    try:
+        context = await build_context(buffer, snapshotter, draft)
+        triage = await llm.triage(context)
+        await notifier.send(context, triage, repeated=draft.repeated)
+    except Exception:
+        logger.exception("инцидент %s не доставлен", draft.container)
+
+
+async def serve(settings: Settings) -> None:
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    buffer = RingBuffer(
+        max_lines=settings.buffer_size_lines,
+        max_bytes=settings.buffer_max_bytes,
+        max_line_chars=settings.line_max_chars,
+    )
+    snapshotter = Snapshotter(settings)
+    llm = LLMClient(settings)
+    notifier = Notifier(settings)
+
+    async def on_ready(draft: IncidentDraft) -> None:
+        await _dispatch(draft, buffer, snapshotter, llm, notifier)
+
+    deduplicator = Deduplicator(settings, on_ready)
+    watcher = DockerWatcher(settings, buffer, deduplicator, snapshotter)
+    try:
+        await watcher.run()
+    finally:
+        await deduplicator.close()
+        await notifier.close()
+        await llm.close()
+
+
+def main() -> None:
+    asyncio.run(serve(Settings()))
+
+
+if __name__ == "__main__":
+    main()
