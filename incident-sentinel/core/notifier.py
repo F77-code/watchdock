@@ -1,0 +1,157 @@
+"""HTML-отчёт в Telegram. Длина сообщения укладывается в лимит Bot API."""
+
+import html
+import logging
+from datetime import timezone
+
+import httpx
+
+from config import Settings
+from schemas.incident import ContainerStatus, IncidentContext
+from schemas.llm import LLMIncidentTriage, SeverityLevel
+
+logger = logging.getLogger(__name__)
+
+TELEGRAM_LIMIT = 4096
+
+_EMOJI = {
+    SeverityLevel.LOW: "🟡",
+    SeverityLevel.MEDIUM: "🟠",
+    SeverityLevel.HIGH: "🔴",
+    SeverityLevel.CRITICAL: "🚨",
+}
+
+
+class Notifier:
+    def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
+        self._settings = settings
+        self._client = client or httpx.AsyncClient(timeout=10)
+        self._owns_client = client is None
+
+    async def close(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    async def send(
+        self,
+        context: IncidentContext,
+        triage: LLMIncidentTriage,
+        *,
+        repeated: bool = False,
+    ) -> None:
+        text = build_message(context, triage, repeated=repeated)
+        url = f"https://api.telegram.org/bot{self._settings.telegram_bot_token}/sendMessage"
+        try:
+            response = await self._client.post(
+                url,
+                json={
+                    "chat_id": self._settings.telegram_chat_id,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            logger.exception("Telegram не принял отчёт по %s", context.failed_container)
+
+
+def build_message(
+    context: IncidentContext,
+    triage: LLMIncidentTriage,
+    *,
+    repeated: bool = False,
+) -> str:
+    root = triage.root_cause
+    steps = list(triage.mitigation_steps)
+    commands = list(triage.suggested_commands)
+    text = _render(context, triage, root, steps, commands, repeated)
+    while len(text) > TELEGRAM_LIMIT:
+        if len(root) > 160:
+            root = root[: len(root) // 2].rstrip() + "…"
+        elif len(commands) > 1:
+            commands = commands[:1]
+        elif len(steps) > 1:
+            steps = steps[:1]
+        else:
+            text = text[: TELEGRAM_LIMIT - 1] + "…"
+            break
+        text = _render(context, triage, root, steps, commands, repeated)
+    return text
+
+
+def _render(
+    context: IncidentContext,
+    triage: LLMIncidentTriage,
+    root: str,
+    steps: list[str],
+    commands: list[str],
+    repeated: bool,
+) -> str:
+    emoji = _EMOJI[triage.severity]
+    stamp = context.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    container = html.escape(context.failed_container)
+    host = context.host_metrics
+    load = ", ".join(f"{value:.2f}" for value in host.load_avg)
+    failed = next(
+        (item for item in context.neighbor_states if item.name == context.failed_container),
+        None,
+    )
+    memory = _memory_line(failed)
+    restarts = failed.restart_count if failed is not None else 0
+    neighbors = ", ".join(
+        f"<code>{html.escape(_neighbor_line(item))}</code>" for item in context.neighbor_states
+    ) or "<code>нет данных</code>"
+    step_lines = "\n".join(
+        f"{index}. {html.escape(step)}" for index, step in enumerate(steps, start=1)
+    ) or "1. Проверить логи контейнера."
+    command_lines = "\n".join(f"<code>{html.escape(command)}</code>" for command in commands)
+    preface = ""
+    if repeated:
+        preface = (
+            f"Повторение инцидента <code>{container}</code> "
+            f"(случился {context.occurrences_count} раз за последние 5 мин)\n\n"
+        )
+    return (
+        f"{preface}"
+        f"{emoji} <b>{triage.severity.value} INCIDENT: [{container}]</b>\n"
+        f"<i>{stamp}</i>\n\n"
+        f"📌 <b>Суть:</b> {html.escape(triage.summary)}\n"
+        f"🏷 <b>Тип:</b> <code>{html.escape(triage.classification.value)}</code>\n"
+        f"⚡️ <b>Критичность:</b> {emoji} <code>{triage.severity.value}</code> "
+        f"(Случилось раз: {context.occurrences_count})\n\n"
+        f"💥 <b>Влияние:</b> {html.escape(triage.blast_radius)}\n\n"
+        f"🔍 <b>Первопричина:</b>\n"
+        f"{html.escape(root)}\n\n"
+        f"📊 <b>Срез системы:</b>\n"
+        f"• Хост: LA <code>[{load}]</code> | RAM: <code>{host.ram_used_pct:.0f}%</code> "
+        f"| Диск: <code>{host.disk_free_gb:.1f} GB свободно</code>\n"
+        f"• Контейнер: RAM <code>{memory}</code> | Restarts: <code>{restarts}</code>\n"
+        f"• Статус соседей: {neighbors}\n\n"
+        f"🛠 <b>Шаги решения:</b>\n"
+        f"{step_lines}\n\n"
+        f"💻 <b>Команды диагностики:</b>\n"
+        f"{command_lines}"
+    )
+
+
+def _memory_line(container: ContainerStatus | None) -> str:
+    if container is None or container.memory_usage_mb is None:
+        return "н/д"
+    usage = _fmt_mb(container.memory_usage_mb)
+    if container.memory_limit_mb is None or container.memory_limit_mb <= 0:
+        return f"{usage}MB"
+    percent = container.memory_usage_mb / container.memory_limit_mb * 100
+    return f"{usage}MB / {_fmt_mb(container.memory_limit_mb)}MB ({percent:.0f}%)"
+
+
+def _fmt_mb(value: float) -> str:
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.1f}"
+
+
+def _neighbor_line(item: ContainerStatus) -> str:
+    if item.health:
+        return f"{item.name}: {item.status} ({item.health})"
+    return f"{item.name}: {item.status}"
