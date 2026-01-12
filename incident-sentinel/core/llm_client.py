@@ -1,0 +1,87 @@
+"""Триаж инцидента через OpenAI Structured Outputs и аварийный отчёт без модели."""
+
+import asyncio
+import json
+import logging
+
+from openai import APIError, AsyncOpenAI
+
+from config import Settings
+from core.sanitizer import sanitize
+from schemas.incident import IncidentContext
+from schemas.llm import IncidentClassification, LLMIncidentTriage, SeverityLevel
+
+logger = logging.getLogger(__name__)
+
+SYSTEM_PROMPT = """Ты — Principal SRE и инцидент-координатор в распределенных Docker-системах.
+Твоя задача — мгновенно локализовать причину падения контейнера или критической ошибки на основе логов и метрик хоста.
+
+Правила:
+1. Анализируй метрики хоста (Load Average, Memory, Disk). Если RAM хоста > 95% или у контейнера OOM — приоритет инфраструктурной причине.
+2. Проверяй состояние соседних сервисов. Если упал backend, а postgres в статусе restarting/unhealthy — фиксируй первопричину в базе данных.
+3. Ответ должен быть предельно конкретным: называй упавший сервис, файл, функцию, SQL-запрос или нехватку ресурса. Никакой воды.
+4. В suggested_commands предоставляй реальные команды docker, docker compose, df, free, journalctl.
+"""
+
+
+class LLMClient:
+    def __init__(self, settings: Settings, client: AsyncOpenAI | None = None) -> None:
+        self._settings = settings
+        self._client = client or AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+            timeout=settings.llm_timeout_sec,
+        )
+
+    async def close(self) -> None:
+        await self._client.close()
+
+    async def triage(self, context: IncidentContext) -> LLMIncidentTriage:
+        try:
+            # В актуальном SDK structured outputs живут в chat.completions.parse.
+            completion = await asyncio.wait_for(
+                self._client.chat.completions.parse(
+                    model=self._settings.openai_model,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": self._user_payload(context)},
+                    ],
+                    response_format=LLMIncidentTriage,
+                ),
+                timeout=self._settings.llm_timeout_sec,
+            )
+        except (APIError, TimeoutError) as exc:
+            logger.warning("триаж LLM недоступен: %s", exc)
+            return fallback_triage(context)
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            logger.warning("модель не вернула структурированный ответ")
+            return fallback_triage(context)
+        return parsed
+
+    def _user_payload(self, context: IncidentContext) -> str:
+        logs = [sanitize(line) for line in context.raw_logs]
+        limit = self._settings.llm_max_log_lines
+        if len(logs) > limit:
+            omitted = len(logs) - limit
+            logs = [f"... пропущено {omitted} строк ...", *logs[-limit:]]
+        text = "\n".join(logs)
+        if len(text) > self._settings.llm_max_log_chars:
+            text = text[-self._settings.llm_max_log_chars :]
+        payload = context.model_dump(mode="json")
+        payload["raw_logs"] = text.splitlines() if text else []
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def fallback_triage(context: IncidentContext) -> LLMIncidentTriage:
+    last = context.raw_logs[-1] if context.raw_logs else "логов нет"
+    container = context.failed_container
+    return LLMIncidentTriage(
+        summary="Автоматический триаж недоступен (LLM Timeout/Error)",
+        severity=SeverityLevel.HIGH,
+        classification=IncidentClassification.UNKNOWN,
+        root_cause="Сырые логи зафиксировали ошибку: " + last,
+        blast_radius="Масштаб не оценён: автоматический триаж недоступен",
+        mitigation_steps=[f"Проверить логи вручную: docker logs --tail 100 {container}"],
+        suggested_commands=[f"docker logs --tail 100 {container}"],
+    )
