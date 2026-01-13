@@ -1,0 +1,33 @@
+services:
+  incident-sentinel:
+    build:
+      context: ./incident-sentinel
+      dockerfile: Dockerfile
+    container_name: incident_sentinel
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-my_app}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - LOG_LEVEL=INFO
+      - BUFFER_SIZE_LINES=200
+      - DEBOUNCE_WINDOW_SEC=5
+      - COOLDOWN_PERIOD_SEC=300
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    networks:
+      - default
