@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import signal
 import uuid
 from datetime import datetime, timezone
 
@@ -79,9 +80,22 @@ async def serve(settings: Settings) -> None:
 
     deduplicator = Deduplicator(settings, on_ready)
     watcher = DockerWatcher(settings, buffer, deduplicator, snapshotter)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+
+    watcher_task = asyncio.create_task(watcher.run(), name="docker-watcher")
     try:
-        await watcher.run()
+        await stop.wait()
+        logger.info("получен сигнал остановки")
     finally:
+        await watcher.stop()
+        try:
+            await asyncio.wait_for(watcher_task, timeout=5)
+        except TimeoutError:
+            watcher_task.cancel()
+            await asyncio.gather(watcher_task, return_exceptions=True)
         await deduplicator.close()
         await notifier.close()
         await llm.close()
