@@ -1,18 +1,64 @@
 # Docker Incident Sentinel
 
-Sidecar for an existing Docker Compose project. It watches one project, not every container on the host.
+Сайдкар для уже работающего Docker Compose. Он читает события и логи контейнеров одного проекта, при сбое снимает телеметрию хоста и просит LLM собрать короткий отчёт в Telegram.
 
-## Environment
+Процесс рассчитан на Python 3.12 и жёсткий лимит контейнера: 0.5 CPU и 256 МБ памяти. Корень файловой системы контейнера только для чтения, временные файлы живут в `tmpfs` на `/tmp`.
 
-| Variable | Default |
+## Что считается инцидентом
+
+Строка лога, если в ней есть один из маркеров: `FATAL` / `CRITICAL` / `PANIC`, traceback Python, `NullPointerException`, `Segmentation fault` / `SIGSEGV`, HTTP 5xx в access-логе, `connection refused`, `deadlock detected`, `out of memory`.
+
+Событие Docker:
+
+- `oom` — даже если буфер логов пустой;
+- `die` с ненулевым кодом выхода;
+- `health_status: unhealthy`.
+
+Контейнер `incident_sentinel` и чужие compose-проекты пропускаются. Событие `restart` само по себе не шлёт отчёт. Если один контейнер перезапустился больше трёх раз за 120 секунд, уходит один сигнал `STUCK_IN_RESTART_LOOP`, следующие 15 минут по этому циклу тишина.
+
+## Как глушится шум
+
+На контейнер хранятся последние 200 строк. Строка длиннее 2048 символов обрезается, на контейнер не больше 500 КБ.
+
+Одинаковые ошибки склеиваются в одну сигнатуру: из текста выкидываются UUID, IP и временные метки, затем считается SHA-256 от имени контейнера и этой строки. Первое срабатывание ждёт 5 секунд и забирает соседние строки, в том числе ошибки других сервисов проекта. Та же сигнатура в следующие 5 минут только увеличивает счётчик. Когда окно кончилось и ошибка повторилась, уходит один отчёт: сколько раз это случилось за последние 5 минут.
+
+Секреты маскируются дважды: перед записью в буфер и ещё раз перед запросом к модели. Это Bearer/JWT, пароль в URI базы, ключи в кавычках и блоки private key.
+
+Если модель не ответила за 10 секунд, упёрлась в rate limit или сеть недоступна, в Telegram уходит аварийная карточка с последней строкой лога и командой `docker logs --tail 100`.
+
+Обрыв сокета Docker не роняет процесс: цикл подключается снова с паузой 1, 2, 4… до 30 секунд.
+
+## Запуск
+
+Сервис описан в корневом `docker-compose.yml`. В окружение compose нужно передать секреты. `COMPOSE_PROJECT_NAME` — это проект, за которым следим, а не имя самого сайдкара.
+
+| Переменная | По умолчанию |
 | --- | --- |
 | `COMPOSE_PROJECT_NAME` | `my_app` |
-| `OPENAI_API_KEY` | required |
+| `OPENAI_API_KEY` | — |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` |
 | `OPENAI_MODEL` | `gpt-4o-mini` |
-| `TELEGRAM_BOT_TOKEN` | required |
-| `TELEGRAM_CHAT_ID` | required |
+| `TELEGRAM_BOT_TOKEN` | — |
+| `TELEGRAM_CHAT_ID` | — |
 | `LOG_LEVEL` | `INFO` |
 | `BUFFER_SIZE_LINES` | `200` |
 | `DEBOUNCE_WINDOW_SEC` | `5` |
 | `COOLDOWN_PERIOD_SEC` | `300` |
+
+```bash
+docker compose build incident-sentinel
+docker compose up -d incident-sentinel
+```
+
+Сокет Docker и псевдо-ФС хоста смонтированы только на чтение: `/var/run/docker.sock`, `/proc` → `/host/proc`, `/sys` → `/host/sys`. Свободное место на диске считается через `statvfs` корня контейнера: отдельный корень хоста в compose не монтируется.
+
+Остановка по `SIGINT` и `SIGTERM` закрывает потоки логов и клиенты Telegram и OpenAI.
+
+## Локальные тесты
+
+```bash
+cd incident-sentinel
+python3.12 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest
+```
