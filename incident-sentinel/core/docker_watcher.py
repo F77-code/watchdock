@@ -227,10 +227,17 @@ class DockerWatcher:
                 if self._stop.is_set():
                     return
                 await self._consume_chunk(name, chunk)
+            await self._flush_partial(name)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("поток логов %s закрыт, ждём start", name, exc_info=True)
+            await self._flush_partial(name)
+
+    async def _flush_partial(self, name: str) -> None:
+        pending = self._partial.pop(name, "")
+        if pending.strip():
+            await self._consume_line(name, pending)
 
     async def _consume_chunk(self, name: str, chunk: str) -> None:
         pending = self._partial.get(name, "") + chunk
