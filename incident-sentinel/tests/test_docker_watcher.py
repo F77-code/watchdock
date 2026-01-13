@@ -163,3 +163,53 @@ async def test_socket_backoff_doubles_until_stop() -> None:
     await watcher.run()
     assert attempts == 3
     assert sleeps == [1.0, 2.0, 4.0]
+
+
+class _FiniteLogs:
+    def __init__(self) -> None:
+        self._closed = False
+
+    async def list_containers(self) -> list[ListedContainer]:
+        return [
+            ListedContainer(
+                id="cid-api",
+                name="backend_api",
+                labels={"com.docker.compose.project": "billing"},
+            )
+        ]
+
+    async def events(self):
+        while not self._closed:
+            await asyncio.sleep(0.01)
+        if False:
+            yield {}
+
+    async def logs(self, container_id: str):
+        yield "FATAL unterminated"
+
+    async def close(self) -> None:
+        self._closed = True
+
+
+@pytest.mark.asyncio
+async def test_unterminated_log_line_still_opens_an_incident() -> None:
+    source = _FiniteLogs()
+
+    async def connect():
+        return source
+
+    recorder = _Recorder()
+    buffer = RingBuffer(max_lines=10, max_bytes=5000, max_line_chars=200)
+    watcher = DockerWatcher(
+        _settings(),
+        buffer,
+        recorder,  # type: ignore[arg-type]
+        connect=connect,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(watcher.run())
+    await asyncio.sleep(0.08)
+    stored = await buffer.snapshot("backend_api")
+    assert stored and "FATAL unterminated" in stored[0]
+    assert ("backend_api", LOG_ERROR) in [(item[0], item[1]) for item in recorder.submitted]
+    await watcher.stop()
+    await asyncio.wait_for(task, timeout=1)
