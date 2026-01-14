@@ -254,11 +254,19 @@ class DockerWatcher:
         if match_log(cleaned):
             await self._deduplicator.submit(name, LOG_ERROR, cleaned)
 
+    def _ignored_names(self) -> set[str]:
+        names = {self._settings.self_container_name}
+        for part in self._settings.ignored_containers.split(","):
+            cleaned = part.strip()
+            if cleaned:
+                names.add(cleaned)
+        return names
+
     def _accept(self, name: str, container_id: str, labels: dict[str, str]) -> bool:
         project = labels.get(_COMPOSE_PROJECT)
         if project != self._settings.compose_project_name:
             return False
-        if name == self._settings.self_container_name:
+        if name in self._ignored_names():
             return False
         if self._own_id and container_id.startswith(self._own_id):
             return False

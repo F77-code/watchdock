@@ -31,3 +31,4 @@ class Settings(BaseSettings):
     host_proc_path: str = "/host/proc"
     host_sys_path: str = "/host/sys"
     self_container_name: str = "incident_sentinel"
+    ignored_containers: str = ""
