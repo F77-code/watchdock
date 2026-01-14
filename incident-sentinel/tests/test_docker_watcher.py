@@ -213,3 +213,46 @@ async def test_unterminated_log_line_still_opens_an_incident() -> None:
     assert ("backend_api", LOG_ERROR) in [(item[0], item[1]) for item in recorder.submitted]
     await watcher.stop()
     await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_ignored_container_names_are_not_followed() -> None:
+    source = _Source(logs={"cid-helper": ["FATAL from helper\n"]}, events=[])
+
+    async def connect():
+        return source
+
+    settings = _settings()
+    settings.ignored_containers = "metrics-helper"
+    source_containers = await source.list_containers()
+    source_containers.append(
+        ListedContainer(
+            id="cid-helper",
+            name="metrics-helper",
+            labels={"com.docker.compose.project": "billing"},
+        )
+    )
+
+    class _Listing(_Source):
+        async def list_containers(self) -> list[ListedContainer]:
+            return source_containers
+
+    listing = _Listing(logs={"cid-helper": ["FATAL from helper\n"]}, events=[])
+
+    async def connect_listing():
+        return listing
+
+    recorder = _Recorder()
+    buffer = RingBuffer(max_lines=10, max_bytes=5000, max_line_chars=200)
+    watcher = DockerWatcher(
+        settings,
+        buffer,
+        recorder,  # type: ignore[arg-type]
+        connect=connect_listing,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(watcher.run())
+    await asyncio.sleep(0.05)
+    assert await buffer.snapshot("metrics-helper") == []
+    assert recorder.submitted == []
+    await watcher.stop()
+    await asyncio.wait_for(task, timeout=1)
