@@ -87,3 +87,10 @@ async def test_restart_loop_emits_one_alert() -> None:
     await asyncio.sleep(0.12)
     assert len(ready) == 1
     await dedup.close()
+
+
+def test_long_hex_ids_share_one_signature() -> None:
+    left = signature_hash("api", "panic req 0123456789abcdef0123456789abcdef")
+    right = signature_hash("api", "panic req fedcba9876543210fedcba9876543210")
+    assert left == right
+    assert "<HEX>" in normalize("0123456789abcdef0123456789abcdef")
