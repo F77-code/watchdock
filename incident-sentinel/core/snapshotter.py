@@ -137,6 +137,7 @@ class Snapshotter:
         host = await asyncio.to_thread(
             read_host_metrics,
             Path(self._settings.host_proc_path),
+            self._settings.host_disk_path,
         )
         neighbors = await self._containers(failed_container)
         neighbors.sort(key=_anomaly_rank)

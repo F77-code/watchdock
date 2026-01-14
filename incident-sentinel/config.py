@@ -30,5 +30,6 @@ class Settings(BaseSettings):
     restart_loop_cooldown_sec: float = Field(default=900, gt=0)
     host_proc_path: str = "/host/proc"
     host_sys_path: str = "/host/sys"
+    host_disk_path: str = "/"
     self_container_name: str = "incident_sentinel"
     ignored_containers: str = ""
