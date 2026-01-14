@@ -17,12 +17,14 @@ _UUID = re.compile(
 )
 _IP = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(\.\d+)?Z?")
+_HEX = re.compile(r"\b[0-9a-f]{16,}\b", re.IGNORECASE)
 
 
 def normalize(text: str) -> str:
     text = _UUID.sub("<UUID>", text)
     text = _IP.sub("<IP>", text)
     text = _TIMESTAMP.sub("<TIMESTAMP>", text)
+    text = _HEX.sub("<HEX>", text)
     return text
 
 
