@@ -125,3 +125,16 @@ async def test_capture_sorts_unhealthy_neighbors_and_reads_stats(tmp_path: Path)
     assert failed.memory_limit_mb == 256.0
     assert neighbors[0].health == "unhealthy"
     assert neighbors[2].memory_usage_mb is None
+
+
+@pytest.mark.asyncio
+async def test_capture_uses_configured_disk_path(tmp_path: Path) -> None:
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / "loadavg").write_text("0.1 0.1 0.1 1/1 1\n")
+    (proc / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 500 kB\n")
+    settings = _settings(tmp_path)
+    settings.host_disk_path = str(tmp_path / "missing-mount")
+    snapshotter = Snapshotter(settings)
+    host, _neighbors = await snapshotter.capture("backend_api")
+    assert host.disk_free_gb == 0.0
