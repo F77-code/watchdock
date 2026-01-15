@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from config import Settings
@@ -131,3 +132,35 @@ async def test_send_posts_html_to_telegram() -> None:
     assert http.payload["chat_id"] == "-100"
     assert http.payload["parse_mode"] == "HTML"
     assert "CRITICAL INCIDENT" in http.payload["text"]
+
+
+class _FlakyHttp:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def post(self, url: str, json: dict) -> _Response:
+        self.calls += 1
+        if self.calls < 3:
+            raise httpx.ConnectError("connection reset")
+        return _Response()
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_telegram_send_retries_before_giving_up() -> None:
+    from core.notifier import Notifier
+
+    http = _FlakyHttp()
+    notifier = Notifier(
+        Settings(openai_api_key="sk", telegram_bot_token="123:abc", telegram_chat_id="-100"),
+        client=http,  # type: ignore[arg-type]
+    )
+
+    async def sleep(_delay: float) -> None:
+        return None
+
+    notifier._sleep = sleep
+    await notifier.send(_context(), _triage())
+    assert http.calls == 3
