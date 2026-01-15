@@ -164,3 +164,8 @@ async def test_telegram_send_retries_before_giving_up() -> None:
     notifier._sleep = sleep
     await notifier.send(_context(), _triage())
     assert http.calls == 3
+
+
+def test_message_ends_with_the_incident_id() -> None:
+    text = build_message(_context(), _triage())
+    assert text.endswith("<code>inc-1</code>")
