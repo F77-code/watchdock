@@ -141,7 +141,8 @@ def _render(
         f"🛠 <b>Шаги решения:</b>\n"
         f"{step_lines}\n\n"
         f"💻 <b>Команды диагностики:</b>\n"
-        f"{command_lines}"
+        f"{command_lines}\n\n"
+        f"<code>{html.escape(context.incident_id)}</code>"
     )
 
 
