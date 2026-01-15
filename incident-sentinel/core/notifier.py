@@ -1,5 +1,6 @@
 """HTML-отчёт в Telegram. Длина сообщения укладывается в лимит Bot API."""
 
+import asyncio
 import html
 import logging
 from datetime import timezone
@@ -27,6 +28,8 @@ class Notifier:
         self._settings = settings
         self._client = client or httpx.AsyncClient(timeout=10)
         self._owns_client = client is None
+        self._attempts = 3
+        self._sleep = asyncio.sleep
 
     async def close(self) -> None:
         if self._owns_client:
@@ -41,19 +44,26 @@ class Notifier:
     ) -> None:
         text = build_message(context, triage, repeated=repeated)
         url = f"https://api.telegram.org/bot{self._settings.telegram_bot_token}/sendMessage"
-        try:
-            response = await self._client.post(
-                url,
-                json={
-                    "chat_id": self._settings.telegram_chat_id,
-                    "text": text,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-            )
-            response.raise_for_status()
-        except httpx.HTTPError:
-            logger.exception("Telegram не принял отчёт по %s", context.failed_container)
+        payload = {
+            "chat_id": self._settings.telegram_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        delay = 0.5
+        last_error: Exception | None = None
+        for attempt in range(self._attempts):
+            try:
+                response = await self._client.post(url, json=payload)
+                response.raise_for_status()
+                return
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt + 1 == self._attempts:
+                    break
+                await self._sleep(delay)
+                delay *= 2
+        logger.error("Telegram не принял отчёт по %s: %s", context.failed_container, last_error)
 
 
 def build_message(
