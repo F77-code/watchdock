@@ -124,7 +124,7 @@ def _render(
         )
     return (
         f"{preface}"
-        f"{emoji} <b>{triage.severity.value} INCIDENT: [{container}]</b>\n"
+        f"{emoji} <b>{triage.severity.value} INCIDENT: [{container}] · {html.escape(context.trigger_type)}</b>\n"
         f"<i>{stamp}</i>\n\n"
         f"📌 <b>Суть:</b> {html.escape(triage.summary)}\n"
         f"🏷 <b>Тип:</b> <code>{html.escape(triage.classification.value)}</code>\n"
