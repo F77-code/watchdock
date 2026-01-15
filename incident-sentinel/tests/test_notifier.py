@@ -55,7 +55,7 @@ def _triage(**overrides: object) -> LLMIncidentTriage:
 
 def test_message_uses_severity_emoji_and_escapes_html() -> None:
     text = build_message(_context(), _triage())
-    assert text.startswith("🚨 <b>CRITICAL INCIDENT: [backend_api]</b>")
+    assert text.startswith("🚨 <b>CRITICAL INCIDENT: [backend_api] · LOG_ERROR</b>")
     assert "2026-09-24 14:15:30 UTC" in text
     assert "<code>DATABASE_CONNECTIVITY</code>" in text
     assert "(Случилось раз: 1)" in text
