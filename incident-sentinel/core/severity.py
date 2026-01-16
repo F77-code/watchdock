@@ -21,3 +21,9 @@ def below_minimum(level: SeverityLevel, minimum: str) -> bool:
     return _ORDER[level] < _ORDER[parse_severity(minimum)]
 
 
+
+
+def ensure_high(level: SeverityLevel) -> SeverityLevel:
+    if _ORDER[level] < _ORDER[SeverityLevel.HIGH]:
+        return SeverityLevel.HIGH
+    return level

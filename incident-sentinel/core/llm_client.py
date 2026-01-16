@@ -8,6 +8,7 @@ from openai import APIError, AsyncOpenAI
 
 from config import Settings
 from core.sanitizer import sanitize
+from core.severity import ensure_high
 from schemas.incident import IncidentContext
 from schemas.llm import IncidentClassification, LLMIncidentTriage, SeverityLevel
 
@@ -52,12 +53,12 @@ class LLMClient:
             )
         except (APIError, TimeoutError) as exc:
             logger.warning("триаж LLM недоступен: %s", exc)
-            return fallback_triage(context)
+            return apply_context_floor(fallback_triage(context), context)
         parsed = completion.choices[0].message.parsed
         if parsed is None:
             logger.warning("модель не вернула структурированный ответ")
-            return fallback_triage(context)
-        return parsed
+            return apply_context_floor(fallback_triage(context), context)
+        return apply_context_floor(parsed, context)
 
     def _user_payload(self, context: IncidentContext) -> str:
         logs = [sanitize(line) for line in context.raw_logs]
@@ -85,3 +86,24 @@ def fallback_triage(context: IncidentContext) -> LLMIncidentTriage:
         mitigation_steps=[f"Проверить логи вручную: docker logs --tail 100 {container}"],
         suggested_commands=[f"docker logs --tail 100 {container}"],
     )
+
+
+def _context_is_serious(context: IncidentContext) -> bool:
+    if context.trigger_type in {"OOM", "STUCK_IN_RESTART_LOOP"}:
+        return True
+    if context.host_metrics.ram_used_pct >= 95:
+        return True
+    for neighbor in context.neighbor_states:
+        text = f"{neighbor.status} {neighbor.health or ''}".lower()
+        if "unhealthy" in text or "restart" in text:
+            return True
+    return False
+
+
+def apply_context_floor(triage: LLMIncidentTriage, context: IncidentContext) -> LLMIncidentTriage:
+    if not _context_is_serious(context):
+        return triage
+    raised = ensure_high(triage.severity)
+    if raised is triage.severity:
+        return triage
+    return triage.model_copy(update={"severity": raised})
