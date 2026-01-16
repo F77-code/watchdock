@@ -139,3 +139,17 @@ def test_fallback_without_logs() -> None:
     context.raw_logs = []
     result = fallback_triage(context)
     assert "логов нет" in result.root_cause
+
+
+def test_quiet_model_answer_is_raised_when_ram_is_gone() -> None:
+    from core.llm_client import apply_context_floor
+
+    calm = _triage()
+    calm.severity = SeverityLevel.LOW
+    context = _context()
+    context.host_metrics.ram_used_pct = 97
+    assert apply_context_floor(calm, context).severity is SeverityLevel.HIGH
+
+    fine = _context()
+    fine.host_metrics.ram_used_pct = 40
+    assert apply_context_floor(calm, fine).severity is SeverityLevel.LOW
