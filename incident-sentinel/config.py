@@ -33,3 +33,4 @@ class Settings(BaseSettings):
     host_disk_path: str = "/"
     self_container_name: str = "incident_sentinel"
     ignored_containers: str = ""
+    min_severity: str = "LOW"

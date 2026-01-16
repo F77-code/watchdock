@@ -14,6 +14,7 @@ from core.docker_watcher import DockerWatcher
 from core.llm_client import LLMClient
 from core.notifier import Notifier
 from core.sanitizer import sanitize
+from core.severity import below_minimum
 from core.snapshotter import Snapshotter
 from schemas.incident import IncidentContext
 
@@ -52,10 +53,19 @@ async def _dispatch(
     snapshotter: Snapshotter,
     llm: LLMClient,
     notifier: Notifier,
+    settings: Settings,
 ) -> None:
     try:
         context = await build_context(buffer, snapshotter, draft)
         triage = await llm.triage(context)
+        if below_minimum(triage.severity, settings.min_severity):
+            logger.info(
+                "пропускаю %s: %s ниже порога %s",
+                draft.container,
+                triage.severity.value,
+                settings.min_severity,
+            )
+            return
         await notifier.send(context, triage, repeated=draft.repeated)
     except Exception:
         logger.exception("инцидент %s не доставлен", draft.container)
@@ -76,7 +86,7 @@ async def serve(settings: Settings) -> None:
     notifier = Notifier(settings)
 
     async def on_ready(draft: IncidentDraft) -> None:
-        await _dispatch(draft, buffer, snapshotter, llm, notifier)
+        await _dispatch(draft, buffer, snapshotter, llm, notifier, settings)
 
     deduplicator = Deduplicator(settings, on_ready)
     watcher = DockerWatcher(settings, buffer, deduplicator, snapshotter)
