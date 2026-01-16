@@ -71,6 +71,16 @@ async def _dispatch(
         logger.exception("инцидент %s не доставлен", draft.container)
 
 
+async def heartbeat(stop: asyncio.Event, interval: float) -> None:
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except TimeoutError:
+            logger.info("sentinel is alive")
+        else:
+            return
+
+
 async def serve(settings: Settings) -> None:
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -96,10 +106,12 @@ async def serve(settings: Settings) -> None:
         loop.add_signal_handler(sig, stop.set)
 
     watcher_task = asyncio.create_task(watcher.run(), name="docker-watcher")
+    heartbeat_task = asyncio.create_task(heartbeat(stop, settings.heartbeat_sec), name="heartbeat")
     try:
         await stop.wait()
         logger.info("получен сигнал остановки")
     finally:
+        heartbeat_task.cancel()
         await watcher.stop()
         try:
             await asyncio.wait_for(watcher_task, timeout=5)

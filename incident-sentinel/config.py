@@ -34,3 +34,4 @@ class Settings(BaseSettings):
     self_container_name: str = "incident_sentinel"
     ignored_containers: str = ""
     min_severity: str = "LOW"
+    heartbeat_sec: float = Field(default=300, gt=0)
