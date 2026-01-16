@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import asyncio
 import pytest
 
 from config import Settings
@@ -113,3 +114,18 @@ async def test_dispatch_skips_alerts_below_the_floor(tmp_path) -> None:
     assert notifier.sent == 0
     await _dispatch(draft, buffer, Snapshotter(settings), _QuietLLM(SeverityLevel.CRITICAL), notifier, settings)  # type: ignore[arg-type]
     assert notifier.sent == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_logs_until_stop(caplog) -> None:
+    import logging
+
+    from main import heartbeat
+
+    caplog.set_level(logging.INFO, logger="main")
+    stop = asyncio.Event()
+    task = asyncio.create_task(heartbeat(stop, 0.02))
+    await asyncio.sleep(0.07)
+    stop.set()
+    await task
+    assert "sentinel is alive" in caplog.text
