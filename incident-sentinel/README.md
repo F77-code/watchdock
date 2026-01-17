@@ -44,11 +44,17 @@
 | `BUFFER_SIZE_LINES` | `200` |
 | `DEBOUNCE_WINDOW_SEC` | `5` |
 | `COOLDOWN_PERIOD_SEC` | `300` |
+| `MIN_SEVERITY` | `LOW` |
+| `IGNORED_CONTAINERS` | пусто |
+| `HOST_DISK_PATH` | `/` |
+| `HEARTBEAT_SEC` | `300` |
 
 ```bash
 docker compose build incident-sentinel
 docker compose up -d incident-sentinel
 ```
+
+Лимит `deploy.resources` Compose применяет только в Swarm. Рядом стоят `cpus` и `mem_limit`, их подхватывает обычный `docker compose up`.
 
 Сокет Docker и псевдо-ФС хоста смонтированы только на чтение: `/var/run/docker.sock`, `/proc` → `/host/proc`, `/sys` → `/host/sys`. Свободное место на диске считается через `statvfs` корня контейнера: отдельный корень хоста в compose не монтируется.
 
@@ -62,3 +68,9 @@ python3.12 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest
 ```
+
+## Как это складывается
+
+Строка лога или событие Docker попадает в детектор. Повтор с той же сигнатурой ждёт окно debounce, потом кулдаун. Снимок хоста и соседей уходит в модель. Если ответ ниже `MIN_SEVERITY`, Telegram молчит. Пока сокет жив и событий нет, раз в `HEARTBEAT_SEC` в лог пишется, что сайдкар на месте.
+
+`IGNORED_CONTAINERS` — имена через запятую, вдобавок к самому `incident_sentinel`. `HOST_DISK_PATH` нужен, только если в compose примонтирован корень хоста и хочется видеть его диск, а не файловую систему контейнера.
