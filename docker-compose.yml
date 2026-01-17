@@ -4,6 +4,8 @@ services:
       context: ./incident-sentinel
       dockerfile: Dockerfile
     container_name: incident_sentinel
+    cpus: 0.50
+    mem_limit: 256m
     restart: unless-stopped
     read_only: true
     tmpfs:
