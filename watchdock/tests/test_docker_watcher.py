@@ -256,3 +256,82 @@ async def test_ignored_container_names_are_not_followed() -> None:
     assert recorder.submitted == []
     await watcher.stop()
     await asyncio.wait_for(task, timeout=1)
+
+
+class _ThisCompose(_Source):
+    def __init__(self) -> None:
+        super().__init__(
+            logs={
+                "cid-api": ["FATAL api\n"],
+                "cid-db": ["FATAL db\n"],
+                "cid-other": ["FATAL foreign\n"],
+            },
+            events=[],
+        )
+        self.asked: list[str] = []
+
+    async def own_project(self, container_id: str) -> str:
+        self.asked.append(container_id)
+        return "watchdock"
+
+    async def list_containers(self) -> list[ListedContainer]:
+        return [
+            ListedContainer(
+                id="cid-api",
+                name="api",
+                labels={"com.docker.compose.project": "watchdock"},
+                status="Up 2 hours",
+            ),
+            ListedContainer(
+                id="cid-db",
+                name="db",
+                labels={"com.docker.compose.project": "watchdock"},
+                status="Up 2 hours (healthy)",
+            ),
+            ListedContainer(
+                id="cid-self",
+                name="watchdock",
+                labels={"com.docker.compose.project": "watchdock"},
+                status="Up",
+            ),
+            ListedContainer(
+                id="cid-other",
+                name="foreign",
+                labels={"com.docker.compose.project": "other"},
+                status="Up",
+            ),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_empty_project_follows_every_container_of_this_compose() -> None:
+    source = _ThisCompose()
+
+    async def connect() -> _ThisCompose:
+        return source
+
+    settings = _settings()
+    settings.compose_project_name = ""
+    recorder = _Recorder()
+    buffer = RingBuffer(max_lines=20, max_bytes=10_000, max_line_chars=200)
+    watcher = DockerWatcher(
+        settings,
+        buffer,
+        recorder,  # type: ignore[arg-type]
+        connect=connect,  # type: ignore[arg-type]
+    )
+    watcher._own_id = "selfcid"
+    task = asyncio.create_task(watcher.run())
+    await asyncio.sleep(0.05)
+
+    assert source.asked == ["selfcid"]
+    assert settings.compose_project_name == "watchdock"
+    assert await buffer.snapshot("api")
+    assert await buffer.snapshot("db")
+    assert await buffer.snapshot("foreign") == []
+    assert await buffer.snapshot("watchdock") == []
+    names = {item[0] for item in recorder.submitted}
+    assert names == {"api", "db"}
+
+    await watcher.stop()
+    await asyncio.wait_for(task, timeout=1)

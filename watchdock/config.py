@@ -8,10 +8,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
     docker_host: str = "unix:///var/run/docker.sock"
-    compose_project_name: str = "my_app"
+    # Пусто: при старте проект читается с лейбла собственного контейнера.
+    compose_project_name: str = ""
     openai_api_key: str
     openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-5-nano"
     telegram_bot_token: str
     telegram_chat_id: str
     log_level: str = "INFO"

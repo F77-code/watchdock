@@ -19,7 +19,7 @@ def test_settings_read_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.buffer_size_lines == 40
     assert settings.debounce_window_sec == 2
     assert settings.cooldown_period_sec == 60
-    assert settings.openai_model == "gpt-4o-mini"
+    assert settings.openai_model == "gpt-5-nano"
     assert settings.buffer_max_bytes == 500 * 1024
     assert settings.line_max_chars == 2048
 

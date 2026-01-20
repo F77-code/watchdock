@@ -12,10 +12,10 @@ services:
       - /tmp:size=64M
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
-      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-my_app}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5-nano}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - LOG_LEVEL=INFO

@@ -36,6 +36,7 @@ class ListedContainer:
     id: str
     name: str
     labels: dict[str, str]
+    status: str = ""
 
 
 class AiodockerSource:
@@ -59,8 +60,17 @@ class AiodockerSource:
             names = payload.get("Names") or []
             name = str(names[0]).lstrip("/") if names else item.id[:12]
             labels = {str(key): str(value) for key, value in (payload.get("Labels") or {}).items()}
-            found.append(ListedContainer(id=item.id, name=name, labels=labels))
+            status = str(payload.get("Status") or payload.get("State") or "")
+            found.append(ListedContainer(id=item.id, name=name, labels=labels, status=status))
         return found
+
+    async def own_project(self, container_id: str) -> str | None:
+        if not container_id:
+            return None
+        info = await self.docker.containers.container(container_id).show()
+        labels = (info.get("Config") or {}).get("Labels") or {}
+        project = labels.get(_COMPOSE_PROJECT)
+        return str(project) if project else None
 
     async def events(self) -> AsyncIterator[dict]:
         filters = clean_filters(
@@ -164,12 +174,30 @@ class DockerWatcher:
     async def _serve(self, source: AiodockerSource) -> None:
         self._source = source
         try:
+            project = await self._resolve_project(source)
+            if not project:
+                logger.error(
+                    "compose-проект не задан и не прочитан с контейнера %s",
+                    self._own_id or "без id",
+                )
+                await self._stop.wait()
+                return
+            self._settings.compose_project_name = project
             docker = getattr(source, "docker", None)
             if self._snapshotter is not None and docker is not None:
                 self._snapshotter.bind(docker)
+            accepted = 0
             for container in await source.list_containers():
-                if self._accept(container.name, container.id, container.labels):
-                    self._track_logs(source, container.id, container.name)
+                if not self._accept(container.name, container.id, container.labels):
+                    continue
+                accepted += 1
+                logger.info(
+                    "контейнер %s: логи и состояние (%s)",
+                    container.name,
+                    container.status or "статус неизвестен",
+                )
+                self._track_logs(source, container.id, container.name)
+            logger.info("в проекте %s под наблюдением %s контейнер(ов)", project, accepted)
             async for raw in source.events():
                 if self._stop.is_set():
                     break
@@ -253,6 +281,20 @@ class DockerWatcher:
         await self._buffer.append(name, cleaned)
         if match_log(cleaned):
             await self._deduplicator.submit(name, LOG_ERROR, cleaned)
+
+    async def _resolve_project(self, source: AiodockerSource) -> str:
+        configured = self._settings.compose_project_name.strip()
+        if configured:
+            return configured
+        discover = getattr(source, "own_project", None)
+        if discover is None or not self._own_id:
+            return ""
+        try:
+            found = await discover(self._own_id)
+        except Exception:
+            logger.exception("не удалось прочитать лейбл своего контейнера")
+            return ""
+        return str(found or "").strip()
 
     def _ignored_names(self) -> set[str]:
         names = {self._settings.self_container_name}
