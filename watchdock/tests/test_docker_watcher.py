@@ -50,7 +50,7 @@ class _Source:
             ),
             ListedContainer(
                 id="cid-self",
-                name="incident_sentinel",
+                name="watchdock",
                 labels={"com.docker.compose.project": "billing"},
             ),
         ]
@@ -100,7 +100,7 @@ async def test_follows_logs_and_container_events() -> None:
                 "com.docker.compose.project": "other",
             }),
             _event("backend_api", "restart", "cid-api"),
-            _event("incident_sentinel", "die", "cid-self", exitCode="1"),
+            _event("watchdock", "die", "cid-self", exitCode="1"),
         ],
     )
 
@@ -122,14 +122,14 @@ async def test_follows_logs_and_container_events() -> None:
     assert stored
     assert "super-secret" not in stored[0]
     assert "FATAL" in stored[0]
-    assert await buffer.snapshot("incident_sentinel") == []
+    assert await buffer.snapshot("watchdock") == []
 
     kinds = [(item[0], item[1]) for item in recorder.submitted]
     assert ("backend_api", LOG_ERROR) in kinds
     assert ("backend_api", OOM) in kinds
     assert ("backend_api", CRASH_EXIT) in kinds
     assert not any(item[0] == "foreign" for item in recorder.submitted)
-    assert not any(item[0] == "incident_sentinel" for item in recorder.submitted)
+    assert not any(item[0] == "watchdock" for item in recorder.submitted)
     assert recorder.submitted.count(("backend_api", CRASH_EXIT, "die exit=137")) == 1
     assert recorder.restarts == ["backend_api"]
 

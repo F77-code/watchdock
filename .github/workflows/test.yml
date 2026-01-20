@@ -13,8 +13,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        working-directory: incident-sentinel
+        working-directory: watchdock
         run: pip install -e ".[dev]"
       - name: Test
-        working-directory: incident-sentinel
+        working-directory: watchdock
         run: pytest

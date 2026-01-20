@@ -103,7 +103,7 @@ async def test_capture_sorts_unhealthy_neighbors_and_reads_stats(tmp_path: Path)
         [],
     )
     sentinel = _Container(
-        "incident_sentinel",
+        "watchdock",
         "Up",
         {"RestartCount": 0, "State": {"Status": "running"}},
         [],

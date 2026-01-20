@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     host_proc_path: str = "/host/proc"
     host_sys_path: str = "/host/sys"
     host_disk_path: str = "/"
-    self_container_name: str = "incident_sentinel"
+    self_container_name: str = "watchdock"
     ignored_containers: str = ""
     min_severity: str = "LOW"
     heartbeat_sec: float = Field(default=300, gt=0)

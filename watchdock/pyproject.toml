@@ -1,7 +1,7 @@
 [project]
-name = "incident-sentinel"
+name = "watchdock"
 version = "0.1.0"
-description = "Сайдкар наблюдения за Docker Compose: логи, триаж инцидента и отчёт в Telegram"
+description = "Watchdock: сайдкар наблюдения за Docker Compose, триаж инцидента и отчёт в Telegram"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

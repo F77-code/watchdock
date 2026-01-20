@@ -1,9 +1,9 @@
 services:
-  incident-sentinel:
+  watchdock:
     build:
-      context: ./incident-sentinel
+      context: ./watchdock
       dockerfile: Dockerfile
-    container_name: incident_sentinel
+    container_name: watchdock
     cpus: 0.50
     mem_limit: 256m
     restart: unless-stopped
