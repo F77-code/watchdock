@@ -42,7 +42,12 @@ class Notifier:
         *,
         repeated: bool = False,
     ) -> bool:
-        text = build_message(context, triage, repeated=repeated)
+        text = build_message(
+            context,
+            triage,
+            repeated=repeated,
+            cooldown_sec=self._settings.cooldown_period_sec,
+        )
         url = f"https://api.telegram.org/bot{self._settings.telegram_bot_token}/sendMessage"
         payload = {
             "chat_id": self._settings.telegram_chat_id,
@@ -67,16 +72,27 @@ class Notifier:
         return False
 
 
+def format_cooldown(seconds: float) -> str:
+    whole = max(0, int(seconds))
+    if whole > 0 and whole % 3600 == 0:
+        hours = whole // 3600
+        return f"{hours} ч"
+    if whole > 0 and whole % 60 == 0:
+        return f"{whole // 60} мин"
+    return f"{whole} с"
+
+
 def build_message(
     context: IncidentContext,
     triage: LLMIncidentTriage,
     *,
     repeated: bool = False,
+    cooldown_sec: float = 300,
 ) -> str:
     root = triage.root_cause
     steps = list(triage.mitigation_steps)
     commands = list(triage.suggested_commands)
-    text = _render(context, triage, root, steps, commands, repeated)
+    text = _render(context, triage, root, steps, commands, repeated, cooldown_sec)
     while len(text) > TELEGRAM_LIMIT:
         if len(root) > 160:
             root = root[: len(root) // 2].rstrip() + "…"
@@ -87,7 +103,7 @@ def build_message(
         else:
             text = text[: TELEGRAM_LIMIT - 1] + "…"
             break
-        text = _render(context, triage, root, steps, commands, repeated)
+        text = _render(context, triage, root, steps, commands, repeated, cooldown_sec)
     return text
 
 
@@ -98,6 +114,7 @@ def _render(
     steps: list[str],
     commands: list[str],
     repeated: bool,
+    cooldown_sec: float,
 ) -> str:
     emoji = _EMOJI[triage.severity]
     stamp = context.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -121,7 +138,7 @@ def _render(
     if repeated:
         preface = (
             f"Повторение инцидента <code>{container}</code> "
-            f"(случился {context.occurrences_count} раз за последние 5 мин)\n\n"
+            f"(случился {context.occurrences_count} раз за последние {format_cooldown(cooldown_sec)})\n\n"
         )
     return (
         f"{preface}"

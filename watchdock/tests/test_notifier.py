@@ -90,6 +90,17 @@ def test_repeated_incident_preface() -> None:
     )
 
 
+def test_repeated_preface_uses_the_configured_cooldown() -> None:
+    text = build_message(
+        _context(occurrences_count=4),
+        _triage(),
+        repeated=True,
+        cooldown_sec=120,
+    )
+    assert "за последние 2 мин" in text
+    assert "5 мин" not in text
+
+
 def test_message_fits_telegram_limit() -> None:
     text = build_message(_context(), _triage(root_cause="A" * 20_000 + "<tag>"))
     assert len(text) <= TELEGRAM_LIMIT
