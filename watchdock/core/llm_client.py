@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 
-from openai import APIError, AsyncOpenAI
+from openai import AsyncOpenAI
 
 from config import Settings
 from core.sanitizer import sanitize
@@ -51,10 +51,12 @@ class LLMClient:
                 ),
                 timeout=self._settings.llm_timeout_sec,
             )
-        except (APIError, TimeoutError) as exc:
+            parsed = completion.choices[0].message.parsed
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             logger.warning("триаж LLM недоступен: %s", exc)
             return apply_context_floor(fallback_triage(context), context)
-        parsed = completion.choices[0].message.parsed
         if parsed is None:
             logger.warning("модель не вернула структурированный ответ")
             return apply_context_floor(fallback_triage(context), context)

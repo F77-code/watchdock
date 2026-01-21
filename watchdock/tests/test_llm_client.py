@@ -1,8 +1,10 @@
+import asyncio
 import json
 
 import httpx
 import pytest
 from openai import APITimeoutError, RateLimitError
+from pydantic import ValidationError
 
 from config import Settings
 from core.llm_client import LLMClient, fallback_triage
@@ -132,6 +134,42 @@ async def test_fallback_on_llm_errors(error: Exception) -> None:
     assert result.severity is SeverityLevel.HIGH
     assert result.suggested_commands == ["docker logs --tail 100 backend_api"]
     assert result.root_cause.startswith("Сырые логи зафиксировали ошибку: ")
+
+
+class _EmptyCompletion:
+    choices: list = []
+
+
+@pytest.mark.asyncio
+async def test_fallback_when_the_model_returns_no_choices() -> None:
+    completions = _Completions(_EmptyCompletion())  # type: ignore[arg-type]
+    client = LLMClient(_settings(), client=_Client(completions))  # type: ignore[arg-type]
+    result = await client.triage(_context())
+    assert result.summary == "Автоматический триаж недоступен (LLM Timeout/Error)"
+    assert result.suggested_commands == ["docker logs --tail 100 backend_api"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_on_validation_error() -> None:
+    try:
+        LLMIncidentTriage.model_validate({"summary": "only one field"})
+    except ValidationError as exc:
+        error = exc
+    else:
+        raise AssertionError("ожидалась ValidationError")
+    completions = _Completions(error=error)
+    client = LLMClient(_settings(), client=_Client(completions))  # type: ignore[arg-type]
+    result = await client.triage(_context())
+    assert result.classification is IncidentClassification.UNKNOWN
+    assert result.severity is SeverityLevel.HIGH
+
+
+@pytest.mark.asyncio
+async def test_triage_lets_cancellation_escape() -> None:
+    completions = _Completions(error=asyncio.CancelledError())
+    client = LLMClient(_settings(), client=_Client(completions))  # type: ignore[arg-type]
+    with pytest.raises(asyncio.CancelledError):
+        await client.triage(_context())
 
 
 def test_fallback_without_logs() -> None:

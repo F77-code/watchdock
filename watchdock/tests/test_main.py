@@ -118,6 +118,62 @@ async def test_dispatch_skips_alerts_below_the_floor(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_still_sends_when_triage_returns_fallback(tmp_path) -> None:
+    from core.llm_client import LLMClient
+    from main import _dispatch
+
+    class _Completions:
+        async def parse(self, **kwargs):
+            raise IndexError("choices")
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _Client:
+        def __init__(self) -> None:
+            self.chat = _Chat()
+
+        async def close(self) -> None:
+            return None
+
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / "loadavg").write_text("0.1 0.1 0.1 1/1 1\n")
+    (proc / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 800 kB\n")
+    settings = Settings(
+        openai_api_key="sk",
+        telegram_bot_token="token",
+        telegram_chat_id="1",
+        host_proc_path=str(proc),
+    )
+    seen: list = []
+
+    class _CaptureNotifier:
+        async def send(self, context, triage, repeated: bool = False) -> bool:
+            seen.append(triage)
+            return True
+
+    delivered = await _dispatch(
+        IncidentDraft(
+            container="api",
+            trigger_type="LOG_ERROR",
+            signature="sig",
+            error_text="FATAL",
+            occurrences=1,
+            repeated=False,
+        ),
+        RingBuffer(max_lines=5, max_bytes=1000, max_line_chars=100),
+        Snapshotter(settings),
+        LLMClient(settings, client=_Client()),  # type: ignore[arg-type]
+        _CaptureNotifier(),  # type: ignore[arg-type]
+        settings,
+    )
+    assert delivered is True
+    assert seen[0].summary == "Автоматический триаж недоступен (LLM Timeout/Error)"
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_logs_until_stop(caplog) -> None:
     import logging
 
