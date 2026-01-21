@@ -4,7 +4,7 @@ import pytest
 
 from config import Settings
 from core.deduplicator import Deduplicator, normalize, signature_hash
-from core.detector import CRASH_EXIT, STUCK_IN_RESTART_LOOP
+from core.detector import CRASH_EXIT, OOM, STUCK_IN_RESTART_LOOP
 
 
 def _settings(**overrides: float | int) -> Settings:
@@ -111,6 +111,27 @@ async def test_failed_delivery_does_not_start_cooldown() -> None:
     await asyncio.sleep(0.12)
     assert len(ready) == 2
     assert next(iter(dedup._states.values())).cooldown_until > 0.0
+    await dedup.close()
+
+
+@pytest.mark.asyncio
+async def test_oom_and_die_137_share_one_review() -> None:
+    ready: list = []
+
+    async def on_ready(draft) -> bool:
+        ready.append(draft)
+        return True
+
+    dedup = Deduplicator(_settings(), on_ready)
+    await dedup.submit("api", OOM, "oom")
+    await dedup.submit("api", CRASH_EXIT, "die exit=137")
+    await asyncio.sleep(0.12)
+    assert len(ready) == 1
+    assert ready[0].trigger_type == OOM
+
+    await dedup.submit("api", CRASH_EXIT, "die exit=1")
+    await asyncio.sleep(0.12)
+    assert [item.trigger_type for item in ready] == [OOM, CRASH_EXIT]
     await dedup.close()
 
 

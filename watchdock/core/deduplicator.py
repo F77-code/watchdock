@@ -10,9 +10,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from config import Settings
-from core.detector import CRASH_EXIT, STUCK_IN_RESTART_LOOP
+from core.detector import CRASH_EXIT, OOM, STUCK_IN_RESTART_LOOP
 
 logger = logging.getLogger(__name__)
+
+# Демон почти сразу после oom шлёт die 137. Вторая карточка в этом окне не нужна.
+_OOM_PAIR_WINDOW_SEC = 15.0
 
 _UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
@@ -67,6 +70,7 @@ class Deduplicator:
         self._states: dict[str, _SignatureState] = {}
         self._restarts: dict[str, deque[float]] = {}
         self._restart_cooldown_until: dict[str, float] = {}
+        self._oom_until: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -74,9 +78,17 @@ class Deduplicator:
         now = time.monotonic()
         digest = signature_hash(container, error_text or trigger_type)
         async with self._lock:
+            if trigger_type == OOM:
+                self._oom_until[container] = now + _OOM_PAIR_WINDOW_SEC
             if (
                 trigger_type == CRASH_EXIT
                 and now < self._restart_cooldown_until.get(container, 0.0)
+            ):
+                return
+            if (
+                trigger_type == CRASH_EXIT
+                and _is_oom_kill(error_text)
+                and now < self._oom_until.get(container, 0.0)
             ):
                 return
             state = self._states.get(digest)
@@ -155,3 +167,7 @@ class Deduplicator:
             state.waiting = False
             if delivered:
                 state.cooldown_until = time.monotonic() + self._settings.cooldown_period_sec
+
+
+def _is_oom_kill(error_text: str) -> bool:
+    return "137" in error_text
