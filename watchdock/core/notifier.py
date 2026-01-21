@@ -14,6 +14,8 @@ from schemas.llm import LLMIncidentTriage, SeverityLevel
 logger = logging.getLogger(__name__)
 
 TELEGRAM_LIMIT = 4096
+# Паузы по Retry-After не должны растягивать отправку на минуты.
+_RETRY_BUDGET_SEC = 8.0
 
 _EMOJI = {
     SeverityLevel.LOW: "🟡",
@@ -56,20 +58,55 @@ class Notifier:
             "disable_web_page_preview": True,
         }
         delay = 0.5
+        spent = 0.0
         last_error: Exception | None = None
         for attempt in range(self._attempts):
             try:
                 response = await self._client.post(url, json=payload)
                 response.raise_for_status()
                 return True
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                wait = delay
+                if exc.response.status_code == 429:
+                    hinted = _retry_after_seconds(exc.response)
+                    if hinted is not None:
+                        wait = hinted
+                paused = await self._backoff(attempt, wait, spent)
+                if paused is None:
+                    break
+                spent += paused
+                delay *= 2
             except httpx.HTTPError as exc:
                 last_error = exc
-                if attempt + 1 == self._attempts:
+                paused = await self._backoff(attempt, delay, spent)
+                if paused is None:
                     break
-                await self._sleep(delay)
+                spent += paused
                 delay *= 2
         logger.error("Telegram не принял отчёт по %s: %s", context.failed_container, last_error)
         return False
+
+    async def _backoff(self, attempt: int, wait: float, spent: float) -> float | None:
+        if attempt + 1 == self._attempts:
+            return None
+        remaining = _RETRY_BUDGET_SEC - spent
+        if remaining <= 0:
+            return None
+        pause = min(max(wait, 0.0), remaining)
+        if pause > 0:
+            await self._sleep(pause)
+        return pause
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    raw = response.headers.get("Retry-After")
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None
 
 
 def format_cooldown(seconds: float) -> str:

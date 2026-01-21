@@ -245,6 +245,63 @@ async def test_telegram_send_returns_false_when_retries_are_exhausted() -> None:
     assert http.calls == 3
 
 
+class _RetryAfterHttp:
+    def __init__(self, retry_after: str, succeed_on: int | None) -> None:
+        self.calls = 0
+        self.retry_after = retry_after
+        self.succeed_on = succeed_on
+
+    async def post(self, url: str, json: dict) -> httpx.Response:
+        self.calls += 1
+        request = httpx.Request("POST", url)
+        if self.succeed_on is not None and self.calls >= self.succeed_on:
+            return httpx.Response(200, request=request)
+        return httpx.Response(429, headers={"Retry-After": self.retry_after}, request=request)
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_telegram_429_waits_for_retry_after() -> None:
+    from core.notifier import Notifier
+
+    http = _RetryAfterHttp("1.5", succeed_on=2)
+    notifier = Notifier(
+        Settings(openai_api_key="sk", telegram_bot_token="123:abc", telegram_chat_id="-100"),
+        client=http,  # type: ignore[arg-type]
+    )
+    slept: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        slept.append(delay)
+
+    notifier._sleep = sleep
+    assert await notifier.send(_context(), _triage()) is True
+    assert http.calls == 2
+    assert slept == [1.5]
+
+
+@pytest.mark.asyncio
+async def test_telegram_429_does_not_wait_past_the_budget() -> None:
+    from core.notifier import Notifier
+
+    http = _RetryAfterHttp("30", succeed_on=None)
+    notifier = Notifier(
+        Settings(openai_api_key="sk", telegram_bot_token="123:abc", telegram_chat_id="-100"),
+        client=http,  # type: ignore[arg-type]
+    )
+    slept: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        slept.append(delay)
+
+    notifier._sleep = sleep
+    assert await notifier.send(_context(), _triage()) is False
+    assert slept == [8.0]
+    assert http.calls == 2
+
+
 def test_message_ends_with_the_incident_id() -> None:
     text = build_message(_context(), _triage())
     assert text.endswith("<code>inc-1</code>")
