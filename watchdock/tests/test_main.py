@@ -78,8 +78,9 @@ class _CountingNotifier:
     def __init__(self) -> None:
         self.sent = 0
 
-    async def send(self, context, triage, repeated: bool = False) -> None:
+    async def send(self, context, triage, repeated: bool = False) -> bool:
         self.sent += 1
+        return True
 
     async def close(self) -> None:
         return None

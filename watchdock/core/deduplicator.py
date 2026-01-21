@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import logging
 import re
 import time
 from collections import deque
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 
 from config import Settings
 from core.detector import CRASH_EXIT, STUCK_IN_RESTART_LOOP
+
+logger = logging.getLogger(__name__)
 
 _UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
@@ -57,7 +60,7 @@ class Deduplicator:
     def __init__(
         self,
         settings: Settings,
-        on_ready: Callable[[IncidentDraft], Awaitable[None]],
+        on_ready: Callable[[IncidentDraft], Awaitable[bool]],
     ) -> None:
         self._settings = settings
         self._on_ready = on_ready
@@ -126,8 +129,6 @@ class Deduplicator:
             state = self._states[digest]
             extra = state.occurrences
             state.occurrences = 0
-            state.waiting = False
-            state.cooldown_until = time.monotonic() + self._settings.cooldown_period_sec
             draft = IncidentDraft(
                 container=state.container,
                 trigger_type=state.trigger_type,
@@ -136,4 +137,21 @@ class Deduplicator:
                 occurrences=carried + extra + 1,
                 repeated=carried > 0,
             )
-        await self._on_ready(draft)
+        delivered = False
+        try:
+            delivered = bool(await self._on_ready(draft))
+        except asyncio.CancelledError:
+            await self._release(digest, delivered=False)
+            raise
+        except Exception:
+            logger.exception("разбор %s не завершился", draft.container)
+        await self._release(digest, delivered=delivered)
+
+    async def _release(self, digest: str, *, delivered: bool) -> None:
+        async with self._lock:
+            state = self._states.get(digest)
+            if state is None:
+                return
+            state.waiting = False
+            if delivered:
+                state.cooldown_until = time.monotonic() + self._settings.cooldown_period_sec

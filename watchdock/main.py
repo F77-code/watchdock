@@ -54,7 +54,7 @@ async def _dispatch(
     llm: LLMClient,
     notifier: Notifier,
     settings: Settings,
-) -> None:
+) -> bool:
     try:
         context = await build_context(buffer, snapshotter, draft)
         triage = await llm.triage(context)
@@ -65,10 +65,11 @@ async def _dispatch(
                 triage.severity.value,
                 settings.min_severity,
             )
-            return
-        await notifier.send(context, triage, repeated=draft.repeated)
+            return True
+        return bool(await notifier.send(context, triage, repeated=draft.repeated))
     except Exception:
         logger.exception("инцидент %s не доставлен", draft.container)
+        return False
 
 
 async def heartbeat(stop: asyncio.Event, interval: float) -> None:
@@ -95,8 +96,8 @@ async def serve(settings: Settings) -> None:
     llm = LLMClient(settings)
     notifier = Notifier(settings)
 
-    async def on_ready(draft: IncidentDraft) -> None:
-        await _dispatch(draft, buffer, snapshotter, llm, notifier, settings)
+    async def on_ready(draft: IncidentDraft) -> bool:
+        return await _dispatch(draft, buffer, snapshotter, llm, notifier, settings)
 
     deduplicator = Deduplicator(settings, on_ready)
     watcher = DockerWatcher(settings, buffer, deduplicator, snapshotter)

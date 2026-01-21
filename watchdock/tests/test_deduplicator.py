@@ -40,8 +40,9 @@ def test_signature_ignores_volatile_tokens() -> None:
 async def test_debounce_collapses_burst_and_cooldown_counts_repeats() -> None:
     ready: list = []
 
-    async def on_ready(draft) -> None:
+    async def on_ready(draft) -> bool:
         ready.append(draft)
+        return True
 
     dedup = Deduplicator(_settings(), on_ready)
     await dedup.submit("api", "LOG_ERROR", "FATAL: pool exhausted")
@@ -68,8 +69,9 @@ async def test_debounce_collapses_burst_and_cooldown_counts_repeats() -> None:
 async def test_restart_loop_emits_one_alert() -> None:
     ready: list = []
 
-    async def on_ready(draft) -> None:
+    async def on_ready(draft) -> bool:
         ready.append(draft)
+        return True
 
     dedup = Deduplicator(_settings(), on_ready)
     for _ in range(3):
@@ -86,6 +88,29 @@ async def test_restart_loop_emits_one_alert() -> None:
     await dedup.note_restart("api")
     await asyncio.sleep(0.12)
     assert len(ready) == 1
+    await dedup.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_delivery_does_not_start_cooldown() -> None:
+    ready: list = []
+
+    async def on_ready(draft) -> bool:
+        ready.append(draft)
+        return len(ready) > 1
+
+    dedup = Deduplicator(_settings(cooldown_period_sec=30), on_ready)
+    await dedup.submit("api", "LOG_ERROR", "FATAL: pool exhausted")
+    await asyncio.sleep(0.12)
+    assert len(ready) == 1
+    state = next(iter(dedup._states.values()))
+    assert state.waiting is False
+    assert state.cooldown_until == 0.0
+
+    await dedup.submit("api", "LOG_ERROR", "FATAL: pool exhausted")
+    await asyncio.sleep(0.12)
+    assert len(ready) == 2
+    assert next(iter(dedup._states.values())).cooldown_until > 0.0
     await dedup.close()
 
 

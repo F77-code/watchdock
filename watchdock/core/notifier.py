@@ -41,7 +41,7 @@ class Notifier:
         triage: LLMIncidentTriage,
         *,
         repeated: bool = False,
-    ) -> None:
+    ) -> bool:
         text = build_message(context, triage, repeated=repeated)
         url = f"https://api.telegram.org/bot{self._settings.telegram_bot_token}/sendMessage"
         payload = {
@@ -56,7 +56,7 @@ class Notifier:
             try:
                 response = await self._client.post(url, json=payload)
                 response.raise_for_status()
-                return
+                return True
             except httpx.HTTPError as exc:
                 last_error = exc
                 if attempt + 1 == self._attempts:
@@ -64,6 +64,7 @@ class Notifier:
                 await self._sleep(delay)
                 delay *= 2
         logger.error("Telegram не принял отчёт по %s: %s", context.failed_container, last_error)
+        return False
 
 
 def build_message(
