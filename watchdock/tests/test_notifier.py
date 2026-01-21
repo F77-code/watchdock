@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -105,6 +106,43 @@ def test_message_fits_telegram_limit() -> None:
     text = build_message(_context(), _triage(root_cause="A" * 20_000 + "<tag>"))
     assert len(text) <= TELEGRAM_LIMIT
     assert "<tag>" not in text
+    assert _html_is_intact(text)
+
+
+def test_long_message_drops_whole_blocks_without_breaking_tags() -> None:
+    neighbors = [
+        ContainerStatus(name=f"svc-{index}", status="Up", health="unhealthy", restart_count=index)
+        for index in range(30)
+    ]
+    text = build_message(
+        _context(neighbor_states=neighbors),
+        _triage(
+            root_cause="причина & причина " * 400 + "<>",
+            summary="суть " * 400,
+            blast_radius="радиус " * 400,
+            mitigation_steps=[f"шаг {index} " + "x" * 180 for index in range(20)],
+            suggested_commands=[f"docker logs svc-{index} && echo <tag>" for index in range(20)],
+        ),
+    )
+    assert len(text) <= TELEGRAM_LIMIT
+    assert "<tag>" not in text
+    assert _html_is_intact(text)
+    assert not re.search(r"&(?!(?:amp|lt|gt|quot);)", text)
+
+
+def _html_is_intact(text: str) -> bool:
+    if re.search(r"<[^>]*$", text):
+        return False
+    stack: list[str] = []
+    for match in re.finditer(r"<(/?)([a-zA-Z]+)[^>]*>", text):
+        closing, name = match.group(1), match.group(2)
+        if closing:
+            if not stack or stack[-1] != name:
+                return False
+            stack.pop()
+        else:
+            stack.append(name)
+    return not stack
 
 
 class _Response:

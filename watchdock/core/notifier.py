@@ -82,6 +82,13 @@ def format_cooldown(seconds: float) -> str:
     return f"{whole} с"
 
 
+def _shorten(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rstrip()
+    return f"{cut or text[:limit]}…"
+
+
 def build_message(
     context: IncidentContext,
     triage: LLMIncidentTriage,
@@ -89,32 +96,68 @@ def build_message(
     repeated: bool = False,
     cooldown_sec: float = 300,
 ) -> str:
+    summary = triage.summary
+    blast = triage.blast_radius
     root = triage.root_cause
     steps = list(triage.mitigation_steps)
     commands = list(triage.suggested_commands)
-    text = _render(context, triage, root, steps, commands, repeated, cooldown_sec)
-    while len(text) > TELEGRAM_LIMIT:
-        if len(root) > 160:
-            root = root[: len(root) // 2].rstrip() + "…"
-        elif len(commands) > 1:
-            commands = commands[:1]
+    show_neighbors = True
+
+    def render() -> str:
+        return _render(
+            context,
+            triage,
+            summary,
+            blast,
+            root,
+            steps,
+            commands,
+            repeated,
+            cooldown_sec,
+            show_neighbors,
+        )
+
+    text = render()
+    for _ in range(80):
+        if len(text) <= TELEGRAM_LIMIT:
+            return text
+        if show_neighbors:
+            show_neighbors = False
+        elif commands:
+            commands.pop()
         elif len(steps) > 1:
-            steps = steps[:1]
+            steps.pop()
+        elif len(root) > 80:
+            root = _shorten(root, max(80, len(root) // 2))
+        elif len(blast) > 60:
+            blast = _shorten(blast, max(60, len(blast) // 2))
+        elif len(summary) > 60:
+            summary = _shorten(summary, max(60, len(summary) // 2))
+        elif steps:
+            steps.pop()
+        elif len(root) > 1:
+            root = _shorten(root, max(1, len(root) // 2))
+        elif len(blast) > 1:
+            blast = _shorten(blast, max(1, len(blast) // 2))
+        elif len(summary) > 1:
+            summary = _shorten(summary, max(1, len(summary) // 2))
         else:
-            text = text[: TELEGRAM_LIMIT - 1] + "…"
             break
-        text = _render(context, triage, root, steps, commands, repeated, cooldown_sec)
+        text = render()
     return text
 
 
 def _render(
     context: IncidentContext,
     triage: LLMIncidentTriage,
+    summary: str,
+    blast: str,
     root: str,
     steps: list[str],
     commands: list[str],
     repeated: bool,
     cooldown_sec: float,
+    show_neighbors: bool,
 ) -> str:
     emoji = _EMOJI[triage.severity]
     stamp = context.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -127,9 +170,13 @@ def _render(
     )
     memory = _memory_line(failed)
     restarts = failed.restart_count if failed is not None else 0
-    neighbors = ", ".join(
-        f"<code>{html.escape(_neighbor_line(item))}</code>" for item in context.neighbor_states
-    ) or "<code>нет данных</code>"
+    if show_neighbors:
+        neighbors = ", ".join(
+            f"<code>{html.escape(_neighbor_line(item))}</code>" for item in context.neighbor_states
+        ) or "<code>нет данных</code>"
+        neighbor_line = f"• Статус соседей: {neighbors}\n"
+    else:
+        neighbor_line = ""
     step_lines = "\n".join(
         f"{index}. {html.escape(step)}" for index, step in enumerate(steps, start=1)
     ) or "1. Проверить логи контейнера."
@@ -144,18 +191,18 @@ def _render(
         f"{preface}"
         f"{emoji} <b>{triage.severity.value} INCIDENT: [{container}] · {html.escape(context.trigger_type)}</b>\n"
         f"<i>{stamp}</i>\n\n"
-        f"📌 <b>Суть:</b> {html.escape(triage.summary)}\n"
+        f"📌 <b>Суть:</b> {html.escape(summary)}\n"
         f"🏷 <b>Тип:</b> <code>{html.escape(triage.classification.value)}</code>\n"
         f"⚡️ <b>Критичность:</b> {emoji} <code>{triage.severity.value}</code> "
         f"(Случилось раз: {context.occurrences_count})\n\n"
-        f"💥 <b>Влияние:</b> {html.escape(triage.blast_radius)}\n\n"
+        f"💥 <b>Влияние:</b> {html.escape(blast)}\n\n"
         f"🔍 <b>Первопричина:</b>\n"
         f"{html.escape(root)}\n\n"
         f"📊 <b>Срез системы:</b>\n"
         f"• Хост: LA <code>[{load}]</code> | RAM: <code>{host.ram_used_pct:.0f}%</code> "
         f"| Диск: <code>{host.disk_free_gb:.1f} GB свободно</code>\n"
         f"• Контейнер: RAM <code>{memory}</code> | Restarts: <code>{restarts}</code>\n"
-        f"• Статус соседей: {neighbors}\n\n"
+        f"{neighbor_line}\n"
         f"🛠 <b>Шаги решения:</b>\n"
         f"{step_lines}\n\n"
         f"💻 <b>Команды диагностики:</b>\n"
