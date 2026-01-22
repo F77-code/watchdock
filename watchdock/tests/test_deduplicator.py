@@ -135,6 +135,38 @@ async def test_oom_and_die_137_share_one_review() -> None:
     await dedup.close()
 
 
+@pytest.mark.asyncio
+async def test_close_flushes_an_open_debounce() -> None:
+    ready: list = []
+
+    async def on_ready(draft) -> bool:
+        ready.append(draft)
+        return True
+
+    dedup = Deduplicator(_settings(debounce_window_sec=30), on_ready)
+    await dedup.submit("api", "LOG_ERROR", "FATAL: pool exhausted")
+    await dedup.close(timeout=1)
+    assert len(ready) == 1
+    state = next(iter(dedup._states.values()))
+    assert state.waiting is False
+    assert state.cooldown_until > 0.0
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_delivery_does_not_leave_waiting() -> None:
+    async def on_ready(_draft) -> bool:
+        await asyncio.sleep(30)
+        return True
+
+    dedup = Deduplicator(_settings(debounce_window_sec=0.01), on_ready)
+    await dedup.submit("api", "LOG_ERROR", "FATAL: pool exhausted")
+    await asyncio.sleep(0.05)
+    await dedup.close(timeout=0.05)
+    state = next(iter(dedup._states.values()))
+    assert state.waiting is False
+    assert state.cooldown_until == 0.0
+
+
 def test_long_hex_ids_share_one_signature() -> None:
     left = signature_hash("api", "panic req 0123456789abcdef0123456789abcdef")
     right = signature_hash("api", "panic req fedcba9876543210fedcba9876543210")

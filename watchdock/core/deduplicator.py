@@ -73,11 +73,15 @@ class Deduplicator:
         self._oom_until: dict[str, float] = {}
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
+        self._closing = False
+        self._wake = asyncio.Event()
 
     async def submit(self, container: str, trigger_type: str, error_text: str) -> None:
         now = time.monotonic()
         digest = signature_hash(container, error_text or trigger_type)
         async with self._lock:
+            if self._closing:
+                return
             if trigger_type == OOM:
                 self._oom_until[container] = now + _OOM_PAIR_WINDOW_SEC
             if (
@@ -128,36 +132,51 @@ class Deduplicator:
         if triggered:
             await self.submit(container, STUCK_IN_RESTART_LOOP, STUCK_IN_RESTART_LOOP)
 
-    async def close(self) -> None:
-        tasks = list(self._tasks)
-        for task in tasks:
+    async def close(self, timeout: float = 5.0) -> None:
+        async with self._lock:
+            self._closing = True
+            tasks = list(self._tasks)
+        self._wake.set()
+        if not tasks:
+            return
+        _done, pending = await asyncio.wait(tasks, timeout=max(0.0, timeout))
+        for task in pending:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def _flush_later(self, digest: str, carried: int) -> None:
-        await asyncio.sleep(self._settings.debounce_window_sec)
-        async with self._lock:
-            state = self._states[digest]
-            extra = state.occurrences
-            state.occurrences = 0
-            draft = IncidentDraft(
-                container=state.container,
-                trigger_type=state.trigger_type,
-                signature=digest,
-                error_text=state.error_text,
-                occurrences=carried + extra + 1,
-                repeated=carried > 0,
-            )
-        delivered = False
         try:
-            delivered = bool(await self._on_ready(draft))
+            try:
+                await asyncio.wait_for(
+                    self._wake.wait(),
+                    timeout=self._settings.debounce_window_sec,
+                )
+            except TimeoutError:
+                pass
+            async with self._lock:
+                state = self._states[digest]
+                extra = state.occurrences
+                state.occurrences = 0
+                draft = IncidentDraft(
+                    container=state.container,
+                    trigger_type=state.trigger_type,
+                    signature=digest,
+                    error_text=state.error_text,
+                    occurrences=carried + extra + 1,
+                    repeated=carried > 0,
+                )
+            delivered = False
+            try:
+                delivered = bool(await self._on_ready(draft))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("разбор %s не завершился", draft.container)
+            await self._release(digest, delivered=delivered)
         except asyncio.CancelledError:
             await self._release(digest, delivered=False)
             raise
-        except Exception:
-            logger.exception("разбор %s не завершился", draft.container)
-        await self._release(digest, delivered=delivered)
 
     async def _release(self, digest: str, *, delivered: bool) -> None:
         async with self._lock:
