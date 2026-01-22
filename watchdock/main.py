@@ -21,6 +21,7 @@ from schemas.incident import IncidentContext
 logger = logging.getLogger(__name__)
 
 _NEIGHBOR_LOG_LIMIT = 20
+SHUTDOWN_BUDGET_SEC = 5.0
 
 
 async def build_context(
@@ -72,6 +73,31 @@ async def _dispatch(
         return False
 
 
+async def shutdown(
+    watcher: DockerWatcher,
+    watcher_task: asyncio.Task[None],
+    deduplicator: Deduplicator,
+    notifier: Notifier,
+    llm: LLMClient,
+    budget: float = SHUTDOWN_BUDGET_SEC,
+) -> None:
+    """Остановить приём, дослать открытый debounce и только потом закрыть клиентов."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget
+    await watcher.stop()
+    remaining = max(0.0, deadline - loop.time())
+    try:
+        await asyncio.wait_for(watcher_task, timeout=remaining)
+    except TimeoutError:
+        watcher_task.cancel()
+        await asyncio.gather(watcher_task, return_exceptions=True)
+    # Короткий запас, чтобы закрытие клиентов не съело дедлайн Docker.
+    remaining = max(0.0, deadline - loop.time() - 0.25)
+    await deduplicator.close(timeout=remaining)
+    await notifier.close()
+    await llm.close()
+
+
 async def heartbeat(stop: asyncio.Event, interval: float) -> None:
     while not stop.is_set():
         try:
@@ -113,15 +139,7 @@ async def serve(settings: Settings) -> None:
         logger.info("получен сигнал остановки")
     finally:
         heartbeat_task.cancel()
-        await watcher.stop()
-        try:
-            await asyncio.wait_for(watcher_task, timeout=5)
-        except TimeoutError:
-            watcher_task.cancel()
-            await asyncio.gather(watcher_task, return_exceptions=True)
-        await deduplicator.close()
-        await notifier.close()
-        await llm.close()
+        await shutdown(watcher, watcher_task, deduplicator, notifier, llm)
 
 
 def main() -> None:

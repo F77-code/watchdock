@@ -5,7 +5,7 @@ import pytest
 
 from config import Settings
 from core.buffer import RingBuffer
-from core.deduplicator import IncidentDraft
+from core.deduplicator import Deduplicator, IncidentDraft
 from core.snapshotter import Snapshotter
 from main import build_context
 
@@ -171,6 +171,61 @@ async def test_dispatch_still_sends_when_triage_returns_fallback(tmp_path) -> No
     )
     assert delivered is True
     assert seen[0].summary == "Автоматический триаж недоступен (LLM Timeout/Error)"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_sends_open_debounce_before_closing_clients() -> None:
+    from main import shutdown
+
+    order: list[str] = []
+    stopped = asyncio.Event()
+
+    class _Watcher:
+        async def stop(self) -> None:
+            order.append("watcher")
+            stopped.set()
+
+    async def watcher_run() -> None:
+        await stopped.wait()
+
+    watcher_task = asyncio.create_task(watcher_run())
+    ready: list = []
+
+    async def on_ready(draft) -> bool:
+        ready.append(draft)
+        order.append("ready")
+        return True
+
+    settings = Settings(
+        openai_api_key="sk",
+        telegram_bot_token="token",
+        telegram_chat_id="1",
+        debounce_window_sec=30,
+    )
+    dedup = Deduplicator(settings, on_ready)
+    await dedup.submit("api", "LOG_ERROR", "FATAL")
+
+    class _Client:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def close(self) -> None:
+            order.append(self.name)
+
+    await shutdown(
+        _Watcher(),  # type: ignore[arg-type]
+        watcher_task,
+        dedup,
+        _Client("telegram"),  # type: ignore[arg-type]
+        _Client("llm"),  # type: ignore[arg-type]
+        budget=1,
+    )
+    assert len(ready) == 1
+    assert order.index("ready") < order.index("telegram")
+    assert order.index("telegram") < order.index("llm")
+    assert watcher_task.done()
+    state = next(iter(dedup._states.values()))
+    assert state.waiting is False
 
 
 @pytest.mark.asyncio
