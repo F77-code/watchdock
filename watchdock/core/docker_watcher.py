@@ -21,6 +21,7 @@ from schemas.docker import DockerEvent
 logger = logging.getLogger(__name__)
 
 _COMPOSE_PROJECT = "com.docker.compose.project"
+_LOG_RETRY_SEC = 1.0
 _EVENT_NAMES = [
     "die",
     "oom",
@@ -126,6 +127,9 @@ class DockerWatcher:
         self._stop = asyncio.Event()
         self._source: AiodockerSource | None = None
         self._log_tasks: dict[str, asyncio.Task[None]] = {}
+        self._retry_tasks: dict[str, asyncio.Task[None]] = {}
+        self._name_of: dict[str, str] = {}
+        self._id_of: dict[str, str] = {}
         self._partial: dict[str, str] = {}
         self._own_id = _read_own_id()
 
@@ -186,18 +190,19 @@ class DockerWatcher:
             docker = getattr(source, "docker", None)
             if self._snapshotter is not None and docker is not None:
                 self._snapshotter.bind(docker)
-            accepted = 0
+            accepted: list[ListedContainer] = []
             for container in await source.list_containers():
                 if not self._accept(container.name, container.id, container.labels):
                     continue
-                accepted += 1
+                accepted.append(container)
                 logger.info(
                     "контейнер %s: логи и состояние (%s)",
                     container.name,
                     container.status or "статус неизвестен",
                 )
-                self._track_logs(source, container.id, container.name)
-            logger.info("в проекте %s под наблюдением %s контейнер(ов)", project, accepted)
+                await self._track_logs(source, container.id, container.name)
+            await self._forget_absent({item.id for item in accepted})
+            logger.info("в проекте %s под наблюдением %s контейнер(ов)", project, len(accepted))
             async for raw in source.events():
                 if self._stop.is_set():
                     break
@@ -222,11 +227,16 @@ class DockerWatcher:
             return
         action = event.action.lower()
         if action == "start":
-            self._track_logs(source, event.container_id, event.container_name)
+            await self._track_logs(source, event.container_id, event.container_name)
             return
         if action == "restart":
             await self._deduplicator.note_restart(event.container_name)
-            self._track_logs(source, event.container_id, event.container_name)
+            await self._track_logs(
+                source,
+                event.container_id,
+                event.container_name,
+                replace=True,
+            )
             return
         trigger = classify_action(event.action, event.exit_code)
         if trigger is None:
@@ -239,15 +249,33 @@ class DockerWatcher:
             text = f"die exit={event.exit_code}"
         await self._deduplicator.submit(event.container_name, trigger, text)
 
-    def _track_logs(self, source: AiodockerSource, container_id: str, name: str) -> None:
+    async def _track_logs(
+        self,
+        source: AiodockerSource,
+        container_id: str,
+        name: str,
+        *,
+        replace: bool = False,
+    ) -> None:
+        self._reap_finished()
+        previous = self._id_of.get(name)
+        if previous and previous != container_id:
+            await self._cancel_log(previous)
         current = self._log_tasks.get(container_id)
         if current is not None and not current.done():
+            if not replace:
+                return
+            await self._cancel_log(container_id)
+        if self._stop.is_set():
             return
+        self._drop_retry(container_id)
         task = asyncio.create_task(
             self._follow_logs(source, container_id, name),
             name=f"logs-{name}",
         )
         self._log_tasks[container_id] = task
+        self._name_of[container_id] = name
+        self._id_of[name] = container_id
 
     async def _follow_logs(self, source: AiodockerSource, container_id: str, name: str) -> None:
         try:
@@ -259,8 +287,76 @@ class DockerWatcher:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.warning("поток логов %s закрыт, ждём start", name, exc_info=True)
+            logger.warning("поток логов %s оборвался, повторяю подписку", name, exc_info=True)
             await self._flush_partial(name)
+            self._schedule_retry(source, container_id, name)
+
+    def _schedule_retry(self, source: AiodockerSource, container_id: str, name: str) -> None:
+        if self._stop.is_set():
+            return
+        current = self._retry_tasks.get(container_id)
+        if current is not None and not current.done():
+            return
+
+        async def _again() -> None:
+            try:
+                await self._sleep(_LOG_RETRY_SEC)
+                if self._stop.is_set():
+                    return
+                if not await self._still_listed(source, container_id):
+                    return
+                await self._track_logs(source, container_id, name, replace=True)
+            except asyncio.CancelledError:
+                raise
+
+        self._retry_tasks[container_id] = asyncio.create_task(
+            _again(),
+            name=f"logs-retry-{name}",
+        )
+
+    async def _still_listed(self, source: AiodockerSource, container_id: str) -> bool:
+        try:
+            listed = await source.list_containers()
+        except Exception:
+            logger.warning("не удалось сверить %s со списком проекта", container_id, exc_info=True)
+            return False
+        return any(
+            item.id == container_id and self._accept(item.name, item.id, item.labels)
+            for item in listed
+        )
+
+    def _reap_finished(self) -> None:
+        finished = [container_id for container_id, task in self._log_tasks.items() if task.done()]
+        for container_id in finished:
+            self._log_tasks.pop(container_id, None)
+            name = self._name_of.pop(container_id, None)
+            if name and self._id_of.get(name) == container_id:
+                self._id_of.pop(name, None)
+
+    async def _forget_absent(self, live_ids: set[str]) -> None:
+        self._reap_finished()
+        stale = [container_id for container_id in self._log_tasks if container_id not in live_ids]
+        for container_id in stale:
+            await self._cancel_log(container_id)
+
+    async def _cancel_log(self, container_id: str) -> None:
+        self._drop_retry(container_id)
+        task = self._log_tasks.pop(container_id, None)
+        name = self._name_of.pop(container_id, None)
+        if name and self._id_of.get(name) == container_id:
+            self._id_of.pop(name, None)
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    def _drop_retry(self, container_id: str) -> None:
+        retry = self._retry_tasks.get(container_id)
+        if retry is None or retry is asyncio.current_task():
+            return
+        self._retry_tasks.pop(container_id, None)
+        if not retry.done():
+            retry.cancel()
 
     async def _flush_partial(self, name: str) -> None:
         pending = self._partial.pop(name, "")
@@ -315,12 +411,17 @@ class DockerWatcher:
         return True
 
     async def _cancel_logs(self) -> None:
+        retries = list(self._retry_tasks.values())
         tasks = list(self._log_tasks.values())
+        self._retry_tasks.clear()
         self._log_tasks.clear()
-        for task in tasks:
+        self._name_of.clear()
+        self._id_of.clear()
+        for task in (*retries, *tasks):
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        pending = [*retries, *tasks]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
 
 def _read_own_id() -> str:
