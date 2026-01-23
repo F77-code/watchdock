@@ -127,6 +127,39 @@ async def test_capture_sorts_unhealthy_neighbors_and_reads_stats(tmp_path: Path)
     assert neighbors[2].memory_usage_mb is None
 
 
+class _Gone(_Container):
+    async def show(self) -> dict:
+        raise RuntimeError("no such container")
+
+
+@pytest.mark.asyncio
+async def test_missing_inspect_keeps_the_listed_status(tmp_path: Path) -> None:
+    gone = _Gone(
+        "backend_api",
+        "Exited (137) 1 second ago",
+        {},
+        [],
+    )
+    postgres = _Container(
+        "postgres",
+        "Up 2 hours",
+        {"RestartCount": 1, "State": {"Status": "running", "Health": {"Status": "healthy"}}},
+        [],
+    )
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / "loadavg").write_text("0.1 0.1 0.1 1/1 1\n")
+    (proc / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 500 kB\n")
+    snapshotter = Snapshotter(_settings(tmp_path))
+    snapshotter.bind(_Docker([gone, postgres]))  # type: ignore[arg-type]
+    _host, neighbors = await snapshotter.capture("backend_api")
+    by_name = {item.name: item for item in neighbors}
+    assert set(by_name) == {"backend_api", "postgres"}
+    assert by_name["backend_api"].status == "Exited (137) 1 second ago"
+    assert by_name["backend_api"].restart_count == 0
+    assert by_name["postgres"].restart_count == 1
+
+
 @pytest.mark.asyncio
 async def test_capture_uses_configured_disk_path(tmp_path: Path) -> None:
     proc = tmp_path / "proc"
