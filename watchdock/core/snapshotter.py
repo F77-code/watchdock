@@ -210,7 +210,7 @@ class Snapshotter:
                 if isinstance(limit, (int, float)) and 0 < limit < _NO_LIMIT:
                     limit_mb = _to_mb(limit)
                 return _to_mb(usage), limit_mb
-        return self._memory_from_cgroup(inspected)
+        return await asyncio.to_thread(self._memory_from_cgroup, inspected)
 
     def _memory_from_cgroup(self, inspected: dict) -> tuple[float | None, float | None]:
         pid = (inspected.get("State") or {}).get("Pid")

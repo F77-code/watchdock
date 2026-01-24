@@ -161,6 +161,32 @@ async def test_missing_inspect_keeps_the_listed_status(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_capture_reads_cgroup_memory_off_the_loop(tmp_path: Path) -> None:
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    (proc / "loadavg").write_text("0.1 0.1 0.1 1/1 1\n")
+    (proc / "meminfo").write_text("MemTotal: 1000 kB\nMemAvailable: 500 kB\n")
+    cgroup = proc / "42"
+    cgroup.mkdir()
+    (cgroup / "cgroup").write_text("0::/docker/abc\n")
+    mem = tmp_path / "sys" / "fs" / "cgroup" / "docker" / "abc"
+    mem.mkdir(parents=True)
+    (mem / "memory.current").write_text("52428800\n")
+    (mem / "memory.max").write_text("104857600\n")
+    api = _Container(
+        "backend_api",
+        "Up",
+        {"RestartCount": 0, "State": {"Status": "running", "Pid": 42}},
+        [],
+    )
+    snapshotter = Snapshotter(_settings(tmp_path))
+    snapshotter.bind(_Docker([api]))  # type: ignore[arg-type]
+    _host, neighbors = await snapshotter.capture("backend_api")
+    assert neighbors[0].memory_usage_mb == 50.0
+    assert neighbors[0].memory_limit_mb == 100.0
+
+
+@pytest.mark.asyncio
 async def test_capture_uses_configured_disk_path(tmp_path: Path) -> None:
     proc = tmp_path / "proc"
     proc.mkdir()
