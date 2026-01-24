@@ -97,6 +97,9 @@ class Deduplicator:
                 return
             state = self._states.get(digest)
             if state is None:
+                self._make_room(now)
+                if len(self._states) >= self._settings.max_signatures:
+                    return
                 state = _SignatureState()
                 self._states[digest] = state
             if state.waiting or now < state.cooldown_until:
@@ -177,6 +180,22 @@ class Deduplicator:
         except asyncio.CancelledError:
             await self._release(digest, delivered=False)
             raise
+
+    def _make_room(self, now: float) -> None:
+        limit = self._settings.max_signatures
+        if len(self._states) < limit:
+            return
+        cooled = sorted(
+            (
+                (digest, state.cooldown_until)
+                for digest, state in self._states.items()
+                if not state.waiting and now >= state.cooldown_until
+            ),
+            key=lambda item: item[1],
+        )
+        while len(self._states) >= limit and cooled:
+            digest, _until = cooled.pop(0)
+            self._states.pop(digest, None)
 
     async def _release(self, digest: str, *, delivered: bool) -> None:
         async with self._lock:

@@ -36,3 +36,4 @@ class Settings(BaseSettings):
     ignored_containers: str = ""
     min_severity: str = "LOW"
     heartbeat_sec: float = Field(default=300, gt=0)
+    max_signatures: int = Field(default=4096, gt=0, le=100_000)

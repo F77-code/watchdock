@@ -167,6 +167,22 @@ async def test_cancel_before_delivery_does_not_leave_waiting() -> None:
     assert state.cooldown_until == 0.0
 
 
+@pytest.mark.asyncio
+async def test_signature_map_stays_within_its_ceiling() -> None:
+    async def on_ready(_draft) -> bool:
+        return True
+
+    dedup = Deduplicator(
+        _settings(max_signatures=3, debounce_window_sec=0.01, cooldown_period_sec=30),
+        on_ready,
+    )
+    for index in range(10):
+        await dedup.submit("api", "LOG_ERROR", f"FATAL unique {index}")
+    await asyncio.sleep(0.05)
+    assert len(dedup._states) <= 3
+    await dedup.close()
+
+
 def test_long_hex_ids_share_one_signature() -> None:
     left = signature_hash("api", "panic req 0123456789abcdef0123456789abcdef")
     right = signature_hash("api", "panic req fedcba9876543210fedcba9876543210")
