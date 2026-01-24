@@ -37,3 +37,4 @@ class Settings(BaseSettings):
     min_severity: str = "LOW"
     heartbeat_sec: float = Field(default=300, gt=0)
     max_signatures: int = Field(default=4096, gt=0, le=100_000)
+    review_concurrency: int = Field(default=2, gt=0, le=8)

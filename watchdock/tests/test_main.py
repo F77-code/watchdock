@@ -229,6 +229,53 @@ async def test_shutdown_sends_open_debounce_before_closing_clients() -> None:
 
 
 @pytest.mark.asyncio
+async def test_third_review_waits_while_logs_still_append() -> None:
+    from main import bounded_review
+
+    slots = asyncio.Semaphore(2)
+    active = 0
+    peak = 0
+    release = asyncio.Event()
+    both_inside = asyncio.Event()
+    buffer = RingBuffer(max_lines=10, max_bytes=5000, max_line_chars=200)
+
+    async def handler(_draft: IncidentDraft) -> bool:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        if active == 2:
+            both_inside.set()
+        await release.wait()
+        active -= 1
+        return True
+
+    async def on_ready(draft: IncidentDraft) -> bool:
+        return await bounded_review(slots, handler, draft)
+
+    dedup = Deduplicator(
+        Settings(
+            openai_api_key="sk",
+            telegram_bot_token="token",
+            telegram_chat_id="1",
+            debounce_window_sec=0.01,
+            cooldown_period_sec=30,
+        ),
+        on_ready,
+    )
+    for index in range(3):
+        await dedup.submit("api", "LOG_ERROR", f"FATAL {index}")
+    await both_inside.wait()
+    await asyncio.sleep(0.05)
+    assert peak == 2
+    assert active == 2
+    await buffer.append("api", "line while reviews are busy")
+    assert await buffer.snapshot("api")
+    release.set()
+    await dedup.close(timeout=1)
+    assert peak == 2
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_logs_until_stop(caplog) -> None:
     import logging
 

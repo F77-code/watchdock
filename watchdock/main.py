@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from config import Settings
@@ -98,6 +99,15 @@ async def shutdown(
     await llm.close()
 
 
+async def bounded_review(
+    slots: asyncio.Semaphore,
+    handler: Callable[[IncidentDraft], Awaitable[bool]],
+    draft: IncidentDraft,
+) -> bool:
+    async with slots:
+        return await handler(draft)
+
+
 async def heartbeat(stop: asyncio.Event, interval: float) -> None:
     while not stop.is_set():
         try:
@@ -121,9 +131,14 @@ async def serve(settings: Settings) -> None:
     snapshotter = Snapshotter(settings)
     llm = LLMClient(settings)
     notifier = Notifier(settings)
+    review_slots = asyncio.Semaphore(settings.review_concurrency)
 
     async def on_ready(draft: IncidentDraft) -> bool:
-        return await _dispatch(draft, buffer, snapshotter, llm, notifier, settings)
+        return await bounded_review(
+            review_slots,
+            lambda draft: _dispatch(draft, buffer, snapshotter, llm, notifier, settings),
+            draft,
+        )
 
     deduplicator = Deduplicator(settings, on_ready)
     watcher = DockerWatcher(settings, buffer, deduplicator, snapshotter)
