@@ -521,6 +521,32 @@ async def test_broken_follow_resubscribes_without_a_start_event() -> None:
     await asyncio.wait_for(task, timeout=1)
 
 
+@pytest.mark.asyncio
+async def test_listing_drops_a_buffer_for_a_container_that_left() -> None:
+    source = _Source(logs={"cid-api": []}, events=[])
+
+    async def connect():
+        return source
+
+    buffer = RingBuffer(max_lines=10, max_bytes=5000, max_line_chars=200)
+    await buffer.append("ghost", "old line")
+    watcher = DockerWatcher(
+        _settings(),
+        buffer,
+        _Recorder(),  # type: ignore[arg-type]
+        connect=connect,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(watcher.run())
+
+    async def ghost_gone() -> bool:
+        return "ghost" not in await buffer.containers()
+
+    await _wait_for(ghost_gone)
+    assert await buffer.snapshot("backend_api") == []
+    await watcher.stop()
+    await asyncio.wait_for(task, timeout=1)
+
+
 async def _has_line(buffer: RingBuffer, needle: str) -> bool:
     stored = await buffer.snapshot("backend_api")
     return any(needle in line for line in stored)

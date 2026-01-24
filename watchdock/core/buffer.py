@@ -74,6 +74,13 @@ class RingBuffer:
         async with self._lock:
             return list(self._lines)
 
+    async def retain(self, names: set[str]) -> None:
+        async with self._lock:
+            stale = [name for name in self._lines if name not in names]
+            for name in stale:
+                self._lines.pop(name, None)
+                self._bytes.pop(name, None)
+
     async def byte_size(self, container: str) -> int:
         async with self._lock:
             return self._bytes.get(container, 0)

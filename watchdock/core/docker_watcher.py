@@ -202,6 +202,7 @@ class DockerWatcher:
                 )
                 await self._track_logs(source, container.id, container.name)
             await self._forget_absent({item.id for item in accepted})
+            await self._buffer.retain({item.name for item in accepted})
             logger.info("в проекте %s под наблюдением %s контейнер(ов)", project, len(accepted))
             async for raw in source.events():
                 if self._stop.is_set():

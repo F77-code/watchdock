@@ -46,3 +46,13 @@ async def test_containers_are_isolated() -> None:
     await buffer.append("db", "from-db")
     assert await buffer.snapshot("api") != await buffer.snapshot("db")
     assert await buffer.snapshot("missing") == []
+
+
+@pytest.mark.asyncio
+async def test_retain_drops_containers_that_left() -> None:
+    buffer = RingBuffer(max_lines=5, max_bytes=10_000, max_line_chars=100)
+    await buffer.append("api", "keep")
+    await buffer.append("ghost", "gone")
+    await buffer.retain({"api"})
+    assert await buffer.containers() == ["api"]
+    assert await buffer.snapshot("ghost") == []
