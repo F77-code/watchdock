@@ -24,6 +24,19 @@ def test_settings_read_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.line_max_chars == 2048
 
 
+def test_settings_reject_a_huge_buffer_or_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setenv("BUFFER_SIZE_LINES", "100000000")
+    with pytest.raises(ValidationError):
+        Settings()
+    monkeypatch.setenv("BUFFER_SIZE_LINES", "200")
+    monkeypatch.setenv("LLM_MAX_LOG_CHARS", "100000000")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
 def test_settings_require_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
