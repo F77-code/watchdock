@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-# docker.sock is often mode 660 and owned by root. Staying root avoids
-# a host-specific group id just to read that one socket.
+# The process stays root so it can read other containers' cgroup files
+# under /host/proc. The daemon socket is not mounted here.
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

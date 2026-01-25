@@ -1,4 +1,26 @@
 services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.4.2
+    container_name: watchdock-docker-proxy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /var/lib/haproxy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      CONTAINERS: 1
+      EVENTS: 1
+      VERSION: 1
+      PING: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
   watchdock:
     build:
       context: ./watchdock
@@ -10,8 +32,12 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
-      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_HOST=tcp://docker-proxy:2375
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -23,9 +49,10 @@ services:
       - DEBOUNCE_WINDOW_SEC=5
       - COOLDOWN_PERIOD_SEC=300
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+    depends_on:
+      - docker-proxy
     deploy:
       resources:
         limits:

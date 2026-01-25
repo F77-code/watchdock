@@ -1,7 +1,23 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from config import Settings
+
+
+def test_compose_does_not_give_watchdock_the_daemon_socket() -> None:
+    compose = (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
+    proxy, watchdock = compose.split("\n  watchdock:\n", 1)
+    assert "tecnativa/docker-socket-proxy:0.4.2" in proxy
+    assert "CONTAINERS: 1" in proxy
+    assert "EVENTS: 1" in proxy
+    assert "POST: 0" in proxy
+    assert "/var/run/docker.sock" not in watchdock
+    assert "tcp://docker-proxy:2375" in watchdock
+    assert watchdock.count("no-new-privileges:true") == 1
+    assert "cap_drop:" in watchdock
+    assert "ALL" in watchdock
 
 
 def test_settings_read_env(monkeypatch: pytest.MonkeyPatch) -> None:
