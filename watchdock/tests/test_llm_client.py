@@ -190,6 +190,15 @@ async def test_unquoted_secrets_do_not_reach_the_prompt() -> None:
     assert "AKIAIOSFODNN7EXAMPLE" not in blob
 
 
+def test_fallback_excerpt_is_masked_and_short() -> None:
+    context = _context()
+    context.raw_logs = ["boom password=hunter2 " + ("x" * 400)]
+    result = fallback_triage(context)
+    assert "hunter2" not in result.root_cause
+    assert len(result.root_cause) < 280
+    assert result.root_cause.endswith("…")
+
+
 def test_fallback_without_logs() -> None:
     context = _context()
     context.raw_logs = []

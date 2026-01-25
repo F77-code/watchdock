@@ -76,8 +76,18 @@ class LLMClient:
         return json.dumps(payload, ensure_ascii=False)
 
 
+_EXCERPT_CHARS = 180
+
+
+def _safe_excerpt(line: str) -> str:
+    cleaned = sanitize(line)
+    if len(cleaned) <= _EXCERPT_CHARS:
+        return cleaned
+    return cleaned[:_EXCERPT_CHARS].rstrip() + "…"
+
+
 def fallback_triage(context: IncidentContext) -> LLMIncidentTriage:
-    last = context.raw_logs[-1] if context.raw_logs else "логов нет"
+    last = _safe_excerpt(context.raw_logs[-1]) if context.raw_logs else "логов нет"
     container = context.failed_container
     return LLMIncidentTriage(
         summary="Автоматический триаж недоступен (LLM Timeout/Error)",
