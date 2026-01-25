@@ -275,6 +275,17 @@ async def test_third_review_waits_while_logs_still_append() -> None:
     assert peak == 2
 
 
+def test_http_client_logs_stay_quiet_when_the_app_is_on_debug() -> None:
+    import logging
+
+    from main import silence_http_client_logs
+
+    logging.getLogger("httpx").setLevel(logging.DEBUG)
+    silence_http_client_logs()
+    assert logging.getLogger("httpx").level == logging.WARNING
+    assert logging.getLogger("httpcore").level == logging.WARNING
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_logs_until_stop(caplog) -> None:
     import logging

@@ -118,11 +118,18 @@ async def heartbeat(stop: asyncio.Event, interval: float) -> None:
             return
 
 
+def silence_http_client_logs() -> None:
+    # httpx пишет URL запроса на DEBUG, а в нём токен бота.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 async def serve(settings: Settings) -> None:
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    silence_http_client_logs()
     buffer = RingBuffer(
         max_lines=settings.buffer_size_lines,
         max_bytes=settings.buffer_max_bytes,
