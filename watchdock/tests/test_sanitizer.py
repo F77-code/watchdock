@@ -37,6 +37,21 @@ def test_masks_private_key_block() -> None:
     assert sanitize(raw) == "[REDACTED_RSA_KEY]"
 
 
+def test_masks_unquoted_password_and_raw_keys() -> None:
+    raw = (
+        "login password=hunter2 failed, "
+        "openai sk-proj-abcdefghijklmnopqrstuv, "
+        "aws AKIAIOSFODNN7EXAMPLE, "
+        "cookie eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+    )
+    cleaned = sanitize(raw)
+    assert "hunter2" not in cleaned
+    assert "sk-proj-abcdefghijklmnopqrstuv" not in cleaned
+    assert "AKIAIOSFODNN7EXAMPLE" not in cleaned
+    assert "eyJhbGciOiJIUzI1NiJ9" not in cleaned
+    assert 'password: "[REDACTED]"' in cleaned
+
+
 def test_leaves_ordinary_log_line() -> None:
     raw = "INFO worker started on port 8080"
     assert sanitize(raw) == raw

@@ -172,6 +172,24 @@ async def test_triage_lets_cancellation_escape() -> None:
         await client.triage(_context())
 
 
+@pytest.mark.asyncio
+async def test_unquoted_secrets_do_not_reach_the_prompt() -> None:
+    context = _context()
+    context.raw_logs = [
+        "login password=hunter2",
+        "openai sk-proj-abcdefghijklmnopqrstuv",
+        "aws AKIAIOSFODNN7EXAMPLE",
+    ]
+    completions = _Completions(_Completion(_triage()))
+    client = LLMClient(_settings(), client=_Client(completions))  # type: ignore[arg-type]
+    await client.triage(context)
+    assert completions.kwargs is not None
+    blob = completions.kwargs["messages"][1]["content"]
+    assert "hunter2" not in blob
+    assert "sk-proj-abcdefghijklmnopqrstuv" not in blob
+    assert "AKIAIOSFODNN7EXAMPLE" not in blob
+
+
 def test_fallback_without_logs() -> None:
     context = _context()
     context.raw_logs = []
