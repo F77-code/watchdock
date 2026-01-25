@@ -302,6 +302,12 @@ async def test_telegram_429_does_not_wait_past_the_budget() -> None:
     assert http.calls == 2
 
 
+def test_commands_are_marked_as_unverified_model_text() -> None:
+    text = build_message(_context(), _triage())
+    assert "Это текст модели, он не проверен. Не запускайте команды вслепую." in text
+    assert text.index("Не запускайте команды вслепую.") < text.index("<code>docker compose ps</code>")
+
+
 def test_message_ends_with_the_incident_id() -> None:
     text = build_message(_context(), _triage())
     assert text.endswith("<code>inc-1</code>")

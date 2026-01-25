@@ -243,6 +243,7 @@ def _render(
         f"🛠 <b>Шаги решения:</b>\n"
         f"{step_lines}\n\n"
         f"💻 <b>Команды диагностики:</b>\n"
+        f"<i>Это текст модели, он не проверен. Не запускайте команды вслепую.</i>\n"
         f"{command_lines}\n\n"
         f"<code>{html.escape(context.incident_id)}</code>"
     )

@@ -108,6 +108,7 @@ async def test_parse_returns_structured_triage_and_sanitizes_prompt() -> None:
     assert completions.kwargs is not None
     assert completions.kwargs["response_format"] is LLMIncidentTriage
     assert "Principal SRE" in completions.kwargs["messages"][0]["content"]
+    assert "не объявляй команду обязательной" in completions.kwargs["messages"][0]["content"].lower()
     payload = json.loads(completions.kwargs["messages"][1]["content"])
     assert "super-secret" not in json.dumps(payload)
     assert payload["raw_logs"][0].startswith("... пропущено")
