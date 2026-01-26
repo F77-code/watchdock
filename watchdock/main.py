@@ -6,6 +6,7 @@ import signal
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from pathlib import Path
 
 from config import Settings
 from core.buffer import RingBuffer
@@ -108,14 +109,30 @@ async def bounded_review(
         return await handler(draft)
 
 
-async def heartbeat(stop: asyncio.Event, interval: float) -> None:
+async def heartbeat(
+    stop: asyncio.Event,
+    interval: float,
+    path: Path,
+    follows: Callable[[], int],
+    failures: Callable[[], int],
+) -> None:
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except TimeoutError:
-            logger.info("sentinel is alive")
+            _touch_heartbeat(path)
+            logger.info(
+                "sentinel is alive follows=%s send_failures=%s",
+                follows(),
+                failures(),
+            )
         else:
             return
+
+
+def _touch_heartbeat(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("ok\n")
 
 
 def silence_http_client_logs() -> None:
@@ -155,7 +172,16 @@ async def serve(settings: Settings) -> None:
         loop.add_signal_handler(sig, stop.set)
 
     watcher_task = asyncio.create_task(watcher.run(), name="docker-watcher")
-    heartbeat_task = asyncio.create_task(heartbeat(stop, settings.heartbeat_sec), name="heartbeat")
+    heartbeat_task = asyncio.create_task(
+        heartbeat(
+            stop,
+            settings.heartbeat_sec,
+            Path(settings.heartbeat_path),
+            watcher.live_follows,
+            notifier.failed_send_count,
+        ),
+        name="heartbeat",
+    )
     try:
         await stop.wait()
         logger.info("получен сигнал остановки")

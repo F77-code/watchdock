@@ -287,15 +287,19 @@ def test_http_client_logs_stay_quiet_when_the_app_is_on_debug() -> None:
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_logs_until_stop(caplog) -> None:
+async def test_heartbeat_logs_until_stop(caplog, tmp_path) -> None:
     import logging
 
     from main import heartbeat
 
     caplog.set_level(logging.INFO, logger="main")
     stop = asyncio.Event()
-    task = asyncio.create_task(heartbeat(stop, 0.02))
+    path = tmp_path / "heartbeat"
+    before = path.stat().st_mtime if path.exists() else 0
+    task = asyncio.create_task(heartbeat(stop, 0.02, path, lambda: 4, lambda: 2))
     await asyncio.sleep(0.07)
     stop.set()
     await task
-    assert "sentinel is alive" in caplog.text
+    assert "sentinel is alive follows=4 send_failures=2" in caplog.text
+    assert path.exists()
+    assert path.stat().st_mtime > before

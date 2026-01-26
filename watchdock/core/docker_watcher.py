@@ -155,6 +155,9 @@ class DockerWatcher:
             if elapsed < 30:
                 delay = min(delay * 2, 30.0)
 
+    def live_follows(self) -> int:
+        return sum(1 for task in self._log_tasks.values() if not task.done())
+
     async def stop(self) -> None:
         self._stop.set()
         source = self._source

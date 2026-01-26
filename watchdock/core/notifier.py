@@ -32,6 +32,7 @@ class Notifier:
         self._owns_client = client is None
         self._attempts = 3
         self._sleep = asyncio.sleep
+        self._failed_sends = 0
 
     async def close(self) -> None:
         if self._owns_client:
@@ -84,8 +85,12 @@ class Notifier:
                     break
                 spent += paused
                 delay *= 2
+        self._failed_sends += 1
         logger.error("Telegram не принял отчёт по %s: %s", context.failed_container, last_error)
         return False
+
+    def failed_send_count(self) -> int:
+        return self._failed_sends
 
     async def _backoff(self, attempt: int, wait: float, spent: float) -> float | None:
         if attempt + 1 == self._attempts:

@@ -243,6 +243,7 @@ async def test_telegram_send_returns_false_when_retries_are_exhausted() -> None:
     notifier._sleep = sleep
     assert await notifier.send(_context(), _triage()) is False
     assert http.calls == 3
+    assert notifier.failed_send_count() == 1
 
 
 class _RetryAfterHttp:

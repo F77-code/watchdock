@@ -6,6 +6,14 @@ from pydantic import ValidationError
 from config import Settings
 
 
+def test_image_healthcheck_watches_the_heartbeat_file() -> None:
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    assert "HEALTHCHECK" in dockerfile
+    assert "HEARTBEAT_PATH" in dockerfile
+    assert "start-period=600s" in dockerfile
+    assert "*2" in dockerfile
+
+
 def test_compose_does_not_give_watchdock_the_daemon_socket() -> None:
     compose = (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text()
     proxy, watchdock = compose.split("\n  watchdock:\n", 1)
