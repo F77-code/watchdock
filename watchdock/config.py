@@ -1,7 +1,10 @@
 """Настройки сайдкара. Публичные переменные совпадают с фрагментом compose в ТЗ."""
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_SEVERITIES = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 class Settings(BaseSettings):
@@ -36,5 +39,30 @@ class Settings(BaseSettings):
     ignored_containers: str = ""
     min_severity: str = "LOW"
     heartbeat_sec: float = Field(default=300, gt=0)
+    heartbeat_path: str = "/tmp/watchdock-heartbeat"
     max_signatures: int = Field(default=4096, gt=0, le=100_000)
     review_concurrency: int = Field(default=2, gt=0, le=8)
+
+    @field_validator("openai_api_key", "telegram_bot_token", "telegram_chat_id")
+    @classmethod
+    def _secret_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("секрет не может быть пустым")
+        return cleaned
+
+    @field_validator("min_severity")
+    @classmethod
+    def _known_severity(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if cleaned not in _SEVERITIES:
+            raise ValueError("неизвестный MIN_SEVERITY")
+        return cleaned
+
+    @field_validator("log_level")
+    @classmethod
+    def _known_log_level(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if cleaned not in _LOG_LEVELS:
+            raise ValueError("неизвестный LOG_LEVEL")
+        return cleaned

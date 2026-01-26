@@ -53,6 +53,15 @@ def test_settings_reject_a_huge_buffer_or_prompt(monkeypatch: pytest.MonkeyPatch
         Settings()
 
 
+def test_settings_reject_blank_secrets_and_unknown_names() -> None:
+    with pytest.raises(ValidationError):
+        Settings(openai_api_key="", telegram_bot_token="token", telegram_chat_id="1")
+    with pytest.raises(ValidationError):
+        Settings(openai_api_key="sk", telegram_bot_token="token", telegram_chat_id="1", min_severity="NOPE")
+    with pytest.raises(ValidationError):
+        Settings(openai_api_key="sk", telegram_bot_token="token", telegram_chat_id="1", log_level="LOUD")
+
+
 def test_settings_require_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
