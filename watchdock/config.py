@@ -13,11 +13,11 @@ class Settings(BaseSettings):
     docker_host: str = "unix:///var/run/docker.sock"
     # Пусто: при старте проект читается с лейбла собственного контейнера.
     compose_project_name: str = ""
-    openai_api_key: str
+    openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-5-nano"
-    telegram_bot_token: str
-    telegram_chat_id: str
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
     log_level: str = "INFO"
     buffer_size_lines: int = Field(default=200, gt=0, le=10_000)
     debounce_window_sec: float = Field(default=5, gt=0)
