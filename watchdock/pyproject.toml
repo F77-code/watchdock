@@ -2,7 +2,6 @@
 name = "watchdock"
 version = "0.1.0"
 description = "Watchdock: сайдкар наблюдения за Docker Compose, триаж инцидента и отчёт в Telegram"
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiodocker>=0.24.0",

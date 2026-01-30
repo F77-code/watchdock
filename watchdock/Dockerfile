@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt pyproject.toml README.md ./
+COPY requirements.txt pyproject.toml ./
 COPY config.py main.py ./
 COPY core ./core
 COPY schemas ./schemas
