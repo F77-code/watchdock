@@ -150,17 +150,17 @@ docker compose logs -f watchdock
 
 Тесты не требуют демона Docker.
 
+Нужен [uv](https://docs.astral.sh/uv/) 0.9.28: им же собран образ и прогон в GitHub Actions.
+
 ```bash
 cd watchdock
-python3.12 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pip install --no-deps -e .
-.venv/bin/pytest
-.venv/bin/ruff check config.py main.py core schemas
-.venv/bin/mypy config.py main.py core schemas
+uv sync
+uv run pytest
+uv run ruff check config.py main.py core schemas
+uv run mypy config.py main.py core schemas
 ```
 
-Образ ставит зависимости из [`watchdock/requirements.txt`](watchdock/requirements.txt), не с плавающих нижних границ. В GitHub Actions тот же набор: ruff, mypy, pytest и `docker build`.
+Образ ставит зависимости из [`watchdock/uv.lock`](watchdock/uv.lock), не с плавающих нижних границ. В GitHub Actions тот же набор: ruff, mypy, pytest и `docker build`.
 
 Каталог с кодом, сервис в Compose и имя контейнера — `watchdock`.
 
